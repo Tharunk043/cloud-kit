@@ -1,0 +1,6 @@
+{
+  "name": "BiteCraft",
+  "description": "Premium client food delivery platform featuring realistic HD visuals, a smooth slide-up customization sheet, built-in AI food recommendations, real-time tracking, and a secure local checkout.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
