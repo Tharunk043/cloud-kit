@@ -105,6 +105,9 @@ class MainActivity : ComponentActivity() {
                                     )
                                 }
                                 showSettings -> {
+                                    val userName by viewModel.currentUserName.collectAsState()
+                                    val userPhone by viewModel.currentUserPhone.collectAsState()
+                                    val userEmail by viewModel.currentUserEmail.collectAsState()
                                     SettingsScreen(
                                         onNavigateToFamily = {
                                             viewModel.showSettingsScreen.value = false
@@ -114,6 +117,16 @@ class MainActivity : ComponentActivity() {
                                         onToggleTheme = { viewModel.toggleTheme() },
                                         isGoldMember = isGold,
                                         onToggleGold = { viewModel.toggleGoldMembership() },
+                                        userName = userName,
+                                        userPhone = userPhone,
+                                        userEmail = userEmail,
+                                        onSaveProfile = { name, email ->
+                                            viewModel.updateProfile(name, email)
+                                        },
+                                        onNavigateToOrders = {
+                                            viewModel.showSettingsScreen.value = false
+                                            currentCustomerScreen = Screen.Tracking
+                                        },
                                         onBack = { viewModel.showSettingsScreen.value = false }
                                     )
                                 }

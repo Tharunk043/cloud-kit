@@ -25,6 +25,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -350,6 +351,99 @@ fun RoleSwitcherBar(
 // ==========================================
 
 @Composable
+fun ActiveOrderBanner(
+    order: OrderEntity,
+    onClick: () -> Unit
+) {
+    Card(
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .clickable { onClick() }
+            .shadow(4.dp, RoundedCornerShape(12.dp))
+            .testTag("active_order_banner")
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Pulsing Emoji representing current status
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
+                val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+                val scale by infiniteTransition.animateFloat(
+                    initialValue = 0.9f,
+                    targetValue = 1.15f,
+                    animationSpec = infiniteRepeatable(
+                        animation = tween(1000, easing = FastOutSlowInEasing),
+                        repeatMode = RepeatMode.Reverse
+                    ),
+                    label = "scale"
+                )
+                Text(
+                    text = when (order.status) {
+                        "Placed" -> "📝"
+                        "Accepted" -> "👍"
+                        "Preparing" -> "🍳"
+                        "OutForDelivery" -> "🛵"
+                        else -> "🍔"
+                    },
+                    fontSize = 20.sp,
+                    modifier = Modifier.graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                    }
+                )
+            }
+            Spacer(modifier = Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "BiteCraft Active Delivery",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = when (order.status) {
+                        "Placed" -> "Order placed! Awaiting kitchen confirmation..."
+                        "Accepted" -> "Restaurant accepted. Cooking soon..."
+                        "Preparing" -> "Chef is preparing your gourmet meal..."
+                        "OutForDelivery" -> "Rider is out for delivery! Heading your way..."
+                        else -> "Order status: ${order.status}"
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "Track Live",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Black,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
 fun CustomerSection(
     viewModel: PlatformViewModel,
     currentScreen: Screen,
@@ -359,54 +453,66 @@ fun CustomerSection(
 ) {
     Scaffold(
         bottomBar = {
-            NavigationBar(
-                containerColor = MaterialTheme.colorScheme.surface,
-                modifier = Modifier.windowInsetsPadding(WindowInsets.navigationBars)
-            ) {
-                val items = listOf(
-                    Triple(Screen.Home, Icons.Outlined.Home, "Explore"),
-                    Triple(Screen.Cart, Icons.Outlined.ShoppingCart, "Cart"),
-                    Triple(Screen.Wallet, Icons.Outlined.AccountBalanceWallet, "Wallet"),
-                    Triple(Screen.Support, Icons.Outlined.Sms, "AI Chat")
-                )
-                items.forEach { (screen, icon, label) ->
-                    val selected = currentScreen.route == screen.route
-                    NavigationBarItem(
-                        selected = selected,
-                        onClick = { onNavigate(screen) },
-                        icon = {
-                            BadgedBox(badge = {
-                                if (screen == Screen.Cart && viewModel.cartItems.collectAsState().value.isNotEmpty()) {
-                                    Badge {
-                                        Text(viewModel.cartItems.collectAsState().value.sumOf { it.quantity }.toString())
+            Column {
+                val activeId by viewModel.activeOrderId.collectAsState()
+                val orders by viewModel.orders.collectAsState()
+                val activeOrder = orders.find { it.id == activeId }
+                if (activeOrder != null && currentScreen != Screen.Tracking && activeOrder.status != "Delivered" && activeOrder.status != "Cancelled") {
+                    ActiveOrderBanner(
+                        order = activeOrder,
+                        onClick = { onNavigate(Screen.Tracking) }
+                    )
+                }
+
+                NavigationBar(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier.windowInsetsPadding(WindowInsets.navigationBars)
+                ) {
+                    val items = listOf(
+                        Triple(Screen.Home, Icons.Outlined.Home, "Explore"),
+                        Triple(Screen.Cart, Icons.Outlined.ShoppingCart, "Cart"),
+                        Triple(Screen.Wallet, Icons.Outlined.AccountBalanceWallet, "Wallet"),
+                        Triple(Screen.Support, Icons.Outlined.Sms, "AI Chat")
+                    )
+                    items.forEach { (screen, icon, label) ->
+                        val selected = currentScreen.route == screen.route
+                        NavigationBarItem(
+                            selected = selected,
+                            onClick = { onNavigate(screen) },
+                            icon = {
+                                BadgedBox(badge = {
+                                    if (screen == Screen.Cart && viewModel.cartItems.collectAsState().value.isNotEmpty()) {
+                                        Badge {
+                                            Text(viewModel.cartItems.collectAsState().value.sumOf { it.quantity }.toString())
+                                        }
                                     }
+                                }) {
+                                    Icon(icon, contentDescription = label)
                                 }
-                            }) {
-                                Icon(icon, contentDescription = label)
-                            }
-                        },
-                        label = { Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                            },
+                            label = { Text(label, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = MaterialTheme.colorScheme.primary,
+                                selectedTextColor = MaterialTheme.colorScheme.primary,
+                                indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
+                            ),
+                            modifier = Modifier.testTag("nav_${screen.route}")
+                        )
+                    }
+                    // Settings item
+                    NavigationBarItem(
+                        selected = false,
+                        onClick = { onOpenSettings() },
+                        icon = { Icon(Icons.Outlined.Settings, contentDescription = "Settings") },
+                        label = { Text("Settings", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
                         colors = NavigationBarItemDefaults.colors(
                             selectedIconColor = MaterialTheme.colorScheme.primary,
                             selectedTextColor = MaterialTheme.colorScheme.primary,
                             indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
                         ),
-                        modifier = Modifier.testTag("nav_${screen.route}")
+                        modifier = Modifier.testTag("nav_settings")
                     )
                 }
-                // Settings item
-                NavigationBarItem(
-                    selected = false,
-                    onClick = { onOpenSettings() },
-                    icon = { Icon(Icons.Outlined.Settings, contentDescription = "Settings") },
-                    label = { Text("Settings", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = MaterialTheme.colorScheme.primary,
-                        selectedTextColor = MaterialTheme.colorScheme.primary,
-                        indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
-                    ),
-                    modifier = Modifier.testTag("nav_settings")
-                )
             }
         }
     ) { padding ->
@@ -2946,8 +3052,12 @@ fun ActiveOrderTrackingView(
                     .border(2.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(20.dp)),
                 contentAlignment = Alignment.Center
             ) {
+                val getCache = remember(viewModel) { { id: Int -> viewModel.getCachedRoute(id) } }
+                val saveCache = remember(viewModel) { { id: Int, pts: List<Pair<Double, Double>> -> viewModel.cacheRoute(id, pts) } }
+
                 if (selectedMapTab == "gps") {
                     OSMDeliveryMap(
+                        orderId = activeOrder.id,
                         customerLat = activeOrder.customerLat,
                         customerLng = activeOrder.customerLng,
                         restaurantLat = activeOrder.restaurantLat,
@@ -2955,11 +3065,14 @@ fun ActiveOrderTrackingView(
                         driverLat = activeOrder.driverLat,
                         driverLng = activeOrder.driverLng,
                         isDarkTheme = darkThemeFlow,
+                        getCachedRoute = getCache,
+                        cacheRoute = saveCache,
                         modifier = Modifier.fillMaxSize()
                     )
                 } else {
                     // Both tabs now show the real OSM map
                     OSMDeliveryMap(
+                        orderId = activeOrder.id,
                         customerLat = activeOrder.customerLat,
                         customerLng = activeOrder.customerLng,
                         restaurantLat = activeOrder.restaurantLat,
@@ -2967,6 +3080,8 @@ fun ActiveOrderTrackingView(
                         driverLat = activeOrder.driverLat,
                         driverLng = activeOrder.driverLng,
                         isDarkTheme = darkThemeFlow,
+                        getCachedRoute = getCache,
+                        cacheRoute = saveCache,
                         modifier = Modifier.fillMaxSize()
                     )
                 }

@@ -50,6 +50,7 @@ class PlatformViewModel(application: Application) : AndroidViewModel(application
     val isLoggedIn = MutableStateFlow(false)
     val currentUserPhone = MutableStateFlow("")
     val currentUserName = MutableStateFlow("Foodie")
+    val currentUserEmail = MutableStateFlow("")
     val currentUserId = MutableStateFlow(-1)
 
     val savedAddresses: StateFlow<List<SavedAddressEntity>> = currentUserId
@@ -64,6 +65,7 @@ class PlatformViewModel(application: Application) : AndroidViewModel(application
             repository.dao.getCurrentUser()?.let { user ->
                 currentUserPhone.value = user.phone
                 currentUserName.value = user.name
+                currentUserEmail.value = user.email
                 currentUserId.value = user.id
                 isLoggedIn.value = true
 
@@ -72,9 +74,22 @@ class PlatformViewModel(application: Application) : AndroidViewModel(application
                     userAddress.value = it.fullAddress
                 }
 
+                // Restore active order locally on startup
+                try {
+                    val activeOrder = repository.orders.first().find {
+                        it.status == "Placed" || it.status == "Accepted" || it.status == "Preparing" || it.status == "OutForDelivery"
+                    }
+                    if (activeOrder != null) {
+                        activeOrderId.value = activeOrder.id
+                    }
+                } catch (e: Exception) {
+                    // Ignore startup recovery errors
+                }
+
                 // Sync profile & address from remote in the background
                 try {
                     val syncedUser = repository.loginOrCreateUser(user.phone, user.name)
+                    currentUserEmail.value = syncedUser.email
                     repository.dao.getDefaultAddress(syncedUser.id)?.let {
                         userAddress.value = it.fullAddress
                     }
@@ -115,6 +130,17 @@ class PlatformViewModel(application: Application) : AndroidViewModel(application
     // Active order being tracked
     val activeOrderId = MutableStateFlow<Int?>(null)
     val supportInputText = MutableStateFlow("")
+
+    // Cache for OSRM route points to avoid redundant network queries when switching tabs
+    private val _routePointsCache = mutableMapOf<Int, List<Pair<Double, Double>>>()
+
+    fun getCachedRoute(orderId: Int): List<Pair<Double, Double>>? {
+        return _routePointsCache[orderId]
+    }
+
+    fun cacheRoute(orderId: Int, points: List<Pair<Double, Double>>) {
+        _routePointsCache[orderId] = points
+    }
 
     // --- Payment State ---
     val paymentState = MutableStateFlow(PaymentState.IDLE)
@@ -424,6 +450,7 @@ class PlatformViewModel(application: Application) : AndroidViewModel(application
             val user = repository.loginOrCreateUser(phone, name)
             currentUserPhone.value = user.phone
             currentUserName.value = user.name.ifEmpty { name }
+            currentUserEmail.value = user.email
             currentUserId.value = user.id
             isLoggedIn.value = true
             
@@ -438,11 +465,28 @@ class PlatformViewModel(application: Application) : AndroidViewModel(application
         isLoggedIn.value = false
         currentUserPhone.value = ""
         currentUserName.value = "Foodie"
+        currentUserEmail.value = ""
         currentUserId.value = -1
         userAddress.value = "Tap to set delivery location"
         
         viewModelScope.launch {
             repository.dao.clearUsers()
+        }
+    }
+
+    fun updateProfile(name: String, email: String) {
+        viewModelScope.launch {
+            val phone = currentUserPhone.value
+            if (phone.isNotEmpty()) {
+                repository.dao.updateUserProfile(phone, name, email)
+                currentUserName.value = name
+                currentUserEmail.value = email
+                try {
+                    repository.loginOrCreateUser(phone, name, email)
+                } catch (e: Exception) {
+                    // Ignore background sync errors
+                }
+            }
         }
     }
 

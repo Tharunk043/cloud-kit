@@ -64,6 +64,11 @@ fun SettingsScreen(
     onToggleTheme: () -> Unit,
     isGoldMember: Boolean,
     onToggleGold: () -> Unit,
+    userName: String,
+    userPhone: String,
+    userEmail: String,
+    onSaveProfile: (String, String) -> Unit,
+    onNavigateToOrders: () -> Unit,
     onBack: () -> Unit = {}
 ) {
     // Local UI state
@@ -138,8 +143,29 @@ fun SettingsScreen(
                         iconBackground = Color(0xFFFFF3E0),
                         iconTint = OrangeGradientStart,
                         title = "Profile Settings",
-                        subtitle = "Tharun V  •  +91 99999 99999",
+                        subtitle = "${userName.ifEmpty { "Foodie" }}  •  $userPhone",
                         onClick = { showProfileDialog = true },
+                        trailingContent = {
+                            Icon(
+                                imageVector = Icons.Default.ChevronRight,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    )
+
+                    HorizontalDivider(
+                        modifier = Modifier.padding(start = 68.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                    )
+
+                    SettingsRow(
+                        icon = Icons.Outlined.Receipt,
+                        iconBackground = Color(0xFFE0F7FA),
+                        iconTint = Color(0xFF0097A7),
+                        title = "Your Orders",
+                        subtitle = "Track active orders & order history",
+                        onClick = onNavigateToOrders,
                         trailingContent = {
                             Icon(
                                 imageVector = Icons.Default.ChevronRight,
@@ -580,7 +606,13 @@ fun SettingsScreen(
     }
 
     if (showProfileDialog) {
-        ProfileEditDialog(onDismiss = { showProfileDialog = false })
+        ProfileEditDialog(
+            initialName = userName,
+            initialEmail = userEmail,
+            initialPhone = userPhone,
+            onSave = onSaveProfile,
+            onDismiss = { showProfileDialog = false }
+        )
     }
 
     showLegalDialog?.let { title ->
@@ -1210,10 +1242,26 @@ fun SavedUpiDialog(onDismiss: () -> Unit) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun ProfileEditDialog(onDismiss: () -> Unit) {
-    var name  by remember { mutableStateOf("Tharun V") }
-    var email by remember { mutableStateOf("tharun.v@bitecraft.app") }
-    var phone by remember { mutableStateOf("+91 99999 99999") }
+private fun ProfileEditDialog(
+    initialName: String,
+    initialEmail: String,
+    initialPhone: String,
+    onSave: (name: String, email: String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var name  by remember { mutableStateOf(initialName) }
+    var email by remember { mutableStateOf(initialEmail) }
+    var phone by remember { mutableStateOf(initialPhone) }
+
+    val initials = remember(name) {
+        if (name.isBlank()) "FD" else {
+            name.split(" ")
+                .filter { it.isNotEmpty() }
+                .map { it[0].uppercaseChar() }
+                .joinToString("")
+                .take(2)
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1231,7 +1279,7 @@ private fun ProfileEditDialog(onDismiss: () -> Unit) {
                         ),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("TV", fontSize = 13.sp, fontWeight = FontWeight.Black, color = Color.White)
+                    Text(initials, fontSize = 13.sp, fontWeight = FontWeight.Black, color = Color.White)
                 }
                 Text("Edit Profile", fontWeight = FontWeight.Bold, fontSize = 17.sp)
             }
@@ -1262,19 +1310,27 @@ private fun ProfileEditDialog(onDismiss: () -> Unit) {
                 OutlinedTextField(
                     value = phone,
                     onValueChange = { phone = it },
+                    enabled = false,
                     label = { Text("Phone Number") },
                     leadingIcon = { Icon(Icons.Outlined.Phone, contentDescription = null, tint = OrangeGradientStart) },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = OrangeGradientStart)
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = OrangeGradientStart,
+                        disabledBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f),
+                        disabledTextColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 )
             }
         },
         confirmButton = {
             Button(
-                onClick = onDismiss,
+                onClick = {
+                    onSave(name, email)
+                    onDismiss()
+                },
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = OrangeGradientStart)
             ) {

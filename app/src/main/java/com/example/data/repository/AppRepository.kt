@@ -806,13 +806,13 @@ class AppRepository(private val context: Context) {
     }
 
     // --- User Authentication ---
-    suspend fun loginOrCreateUser(phone: String, name: String): UserEntity = withContext(Dispatchers.IO) {
+    suspend fun loginOrCreateUser(phone: String, name: String, email: String = ""): UserEntity = withContext(Dispatchers.IO) {
         val existing = dao.getUserByPhone(phone)
         val token = java.util.UUID.randomUUID().toString()
 
         var remoteUser: com.example.data.api.MongoUser? = null
         try {
-            val response = apiService.syncUserProfile(com.example.data.api.SyncUserRequest(phone, name))
+            val response = apiService.syncUserProfile(com.example.data.api.SyncUserRequest(phone, name, email.ifEmpty { existing?.email ?: "" }))
             if (response.isSuccessful && response.body()?.success == true) {
                 remoteUser = response.body()?.data
                 Log.d("AppRepository", "Synced profile with remote Supabase DB successfully: balance = ${remoteUser?.walletBalance}")
@@ -825,6 +825,7 @@ class AppRepository(private val context: Context) {
             val updatedUser = existing.copy(
                 sessionToken = token,
                 name = remoteUser?.name ?: name,
+                email = remoteUser?.email ?: email.ifEmpty { existing.email },
                 walletBalance = remoteUser?.walletBalance ?: existing.walletBalance,
                 lastLoginAt = System.currentTimeMillis()
             )
@@ -839,6 +840,7 @@ class AppRepository(private val context: Context) {
             val newUser = UserEntity(
                 phone = phone,
                 name = remoteUser?.name ?: name,
+                email = remoteUser?.email ?: email,
                 sessionToken = token,
                 isVerified = true,
                 walletBalance = remoteUser?.walletBalance ?: 100.0,

@@ -188,6 +188,7 @@ private fun straightLinePoints(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun OSMDeliveryMap(
+    orderId: Int,
     customerLat: Double,
     customerLng: Double,
     restaurantLat: Double,
@@ -195,6 +196,8 @@ fun OSMDeliveryMap(
     driverLat: Double,
     driverLng: Double,
     isDarkTheme: Boolean,
+    getCachedRoute: (Int) -> List<Pair<Double, Double>>?,
+    cacheRoute: (Int, List<Pair<Double, Double>>) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -247,9 +250,16 @@ fun OSMDeliveryMap(
 
     // Fetch OSRM route whenever restaurant/customer coords change; fall back to straight line
     LaunchedEffect(restaurantLat, restaurantLng, customerLat, customerLng) {
-        val osrmPoints = fetchOsrmRoute(restaurantLat, restaurantLng, customerLat, customerLng)
-        val points = if (osrmPoints.isNotEmpty()) osrmPoints
-        else straightLinePoints(restaurantLat, restaurantLng, driverLat, driverLng, customerLat, customerLng)
+        val cached = getCachedRoute(orderId)
+        val points = if (cached != null && cached.isNotEmpty()) {
+            cached.map { GeoPoint(it.first, it.second) }
+        } else {
+            val osrmPoints = fetchOsrmRoute(restaurantLat, restaurantLng, customerLat, customerLng)
+            val pts = if (osrmPoints.isNotEmpty()) osrmPoints
+            else straightLinePoints(restaurantLat, restaurantLng, driverLat, driverLng, customerLat, customerLng)
+            cacheRoute(orderId, pts.map { Pair(it.latitude, it.longitude) })
+            pts
+        }
         routePoints = points
 
         withContext(Dispatchers.Main) {
