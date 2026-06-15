@@ -172,16 +172,18 @@ exports.trackOrder = async (req, res, next) => {
     } else if (status === 'OutForDelivery') {
       const latDiff = order.customer_lat - driverLat;
       const lngDiff = order.customer_lng - driverLng;
+      const distance = Math.sqrt(latDiff * latDiff + lngDiff * lngDiff);
 
-      if (Math.abs(latDiff) < 0.001 && Math.abs(lngDiff) < 0.001) {
+      // constant step size for smooth linear motion towards customer (approx 80-100m steps)
+      const step = 0.0008; 
+      if (distance <= step || (Math.abs(latDiff) < 0.0008 && Math.abs(lngDiff) < 0.0008)) {
         status = 'Delivered';
         driverLat = order.customer_lat;
         driverLng = order.customer_lng;
         console.log(`[Order] ${id} -> Delivered`);
       } else {
-        // Move driver 50% closer
-        driverLat = driverLat + latDiff * 0.5;
-        driverLng = driverLng + lngDiff * 0.5;
+        driverLat = driverLat + (latDiff / distance) * step;
+        driverLng = driverLng + (lngDiff / distance) * step;
       }
     }
 

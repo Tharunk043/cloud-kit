@@ -153,19 +153,22 @@ const initDB = async () => {
     `);
     console.log('Saved addresses table verified.');
 
-    // 5. Seed restaurants if empty
+    // 5. Seed restaurants if empty or containing legacy Vijayawada data
     const resCount = await client.query('SELECT COUNT(*) FROM restaurants;');
     const count = parseInt(resCount.rows[0].count);
+    const legacyCheck = await client.query("SELECT COUNT(*) FROM restaurants WHERE address LIKE '%Vijayawada%';");
+    const isLegacy = parseInt(legacyCheck.rows[0].count) > 0;
 
-    if (count === 0) {
-      console.log('Supabase Restaurants table is empty. Pre-seeding delicious Andhra cuisine...');
+    if (count === 0 || isLegacy) {
+      console.log('Supabase Restaurants table is empty or has legacy Vijayawada data. Seeding real Kadapa locations...');
+      await client.query('DELETE FROM restaurants;');
       
       const seedData = [
-        ['1', 'Rayalaseema Ruchulu', 'Andhra & Rayalaseema', 4.8, 20, 25.0, 'burger_lab', 'MG Road, Vijayawada, Andhra Pradesh 520010', 16.5062, 80.6480, false, true, 'Authentic spicy Rayalaseema cuisine — ragi sangati, gongura mutton, chepa pulusu & traditional Andhra meals.'],
-        ['2', 'Biryani House Guntur', 'Biryani & Mughlai', 4.7, 30, 30.0, 'pizza_slice', 'Brodipet, Guntur, Andhra Pradesh 522002', 16.3067, 80.4365, false, false, 'Legendary Guntur spiced dum biryani, nalli shorba, mirchi bajji and classic Hyderabadi haleem.'],
-        ['3', 'Govinda\'s Pure Veg', 'South Indian Vegetarian', 4.6, 18, 20.0, 'ramen_bowl', 'Kondapalli Road, Krishna Dist., Andhra Pradesh', 16.6156, 80.5499, true, true, 'Pure vegetarian South Indian meals — pesarattu, punugulu, gongura pachadi, Andhra thali & filter coffee.'],
-        ['4', 'Sweet Bhoomi Sweets', 'Indian Sweets & Snacks', 4.9, 12, 0.0, 'cake_slice', 'Eluru Road, Vijayawada, Andhra Pradesh 520002', 16.5193, 80.6305, true, false, 'Famous Andhra sweets — Tirupati laddu, Ariselu, Pootharekulu, Bobbatlu & fresh Kajjikayalu.'],
-        ['5', 'Hyderabad Spice Garden', 'Hyderabadi', 4.7, 25, 35.0, 'burger_lab', 'Banjara Hills, Hyderabad, Telangana 500034', 17.4126, 78.4071, false, true, 'Premium Hyderabadi cuisine — Kacchi dum biryani, double ka meetha, Irani chai & sheer khurma.']
+        ['1', 'Rayalaseema Ruchulu Kadapa', 'Andhra & Rayalaseema', 4.8, 20, 25.0, 'burger_lab', 'Seven Roads Circle, Kadapa, Andhra Pradesh 516001', 14.4745, 78.8262, false, true, 'Authentic spicy Rayalaseema cuisine — ragi sangati, gongura mutton, chepa pulusu & traditional Kadapa meals.'],
+        ['2', 'Hotel Srinivasa Regency', 'Biryani & Mughlai', 4.7, 30, 30.0, 'pizza_slice', 'Trunk Road, Near RTC Bus Stand, Kadapa, Andhra Pradesh 516001', 14.4752, 78.8258, false, false, 'Legendary Rayalaseema spiced dum biryani, nalli shorba, mirchi bajji and traditional kebabs.'],
+        ['3', 'Govinda Pure Veg Kadapa', 'South Indian Vegetarian', 4.6, 18, 20.0, 'ramen_bowl', 'Yerramukkapalli, Kadapa, Andhra Pradesh 516004', 14.4645, 78.8152, true, true, 'Pure vegetarian South Indian meals — pesarattu, punugulu, gongura pachadi, special thali & filter coffee.'],
+        ['4', 'Haritha Tourism Hotel', 'Indian Sweets & Snacks', 4.9, 12, 0.0, 'cake_slice', 'Near Collectorate, Kadapa, Andhra Pradesh 516001', 14.4784, 78.8192, true, false, 'Famous regional sweets — Tirupati laddu, Ariselu, Pootharekulu, Bobbatlu & traditional snacks.'],
+        ['5', 'Hyderabad Biryani House Kadapa', 'Hyderabadi', 4.7, 25, 35.0, 'burger_lab', 'Christian Lane, Kadapa, Andhra Pradesh 516001', 14.4718, 78.8235, false, true, 'Premium Hyderabadi & Rayalaseema fusion cuisine — Kacchi dum biryani, double ka meetha, Irani chai & mutton specialties.']
       ];
 
       for (const row of seedData) {

@@ -231,6 +231,7 @@ fun OSMDeliveryMap(
     var routePolyline by remember { mutableStateOf<Polyline?>(null) }
     var locationOverlay by remember { mutableStateOf<MyLocationNewOverlay?>(null) }
     var routePoints by remember { mutableStateOf<List<GeoPoint>>(emptyList()) }
+    var isRouteLoading by remember { mutableStateOf(false) }
 
     // Lifecycle management for MapView
     DisposableEffect(lifecycleOwner) {
@@ -254,10 +255,12 @@ fun OSMDeliveryMap(
         val points = if (cached != null && cached.isNotEmpty()) {
             cached.map { GeoPoint(it.first, it.second) }
         } else {
+            isRouteLoading = true
             val osrmPoints = fetchOsrmRoute(restaurantLat, restaurantLng, customerLat, customerLng)
             val pts = if (osrmPoints.isNotEmpty()) osrmPoints
             else straightLinePoints(restaurantLat, restaurantLng, driverLat, driverLng, customerLat, customerLng)
             cacheRoute(orderId, pts.map { Pair(it.latitude, it.longitude) })
+            isRouteLoading = false
             pts
         }
         routePoints = points
@@ -275,7 +278,8 @@ fun OSMDeliveryMap(
 
     // Animate rider marker along route when driverLat/driverLng changes.
     // Bearing is derived from the nearest route segment so it matches road direction exactly.
-    LaunchedEffect(driverLat, driverLng) {
+    LaunchedEffect(driverLat, driverLng, driverMarker) {
+        if (driverMarker == null) return@LaunchedEffect
         val target = GeoPoint(driverLat, driverLng)
         val start = prevDriverPos ?: GeoPoint(driverLat, driverLng)
         prevDriverPos = target
@@ -301,10 +305,17 @@ fun OSMDeliveryMap(
             driverMarker?.rotation ?: 0f
         }
 
+        // Apply a 180 degrees offset because the bike PNG points South (downwards) natively.
+        // This ensures the front wheel points in the correct direction of travel.
+        val correctedRotation = (routeBearing + 180f) % 360f
+
         if (start.latitude == target.latitude && start.longitude == target.longitude) {
-            // No movement — just ensure marker is at correct position
+            // No movement — just ensure marker is at correct position and rotated
             withContext(Dispatchers.Main) {
-                driverMarker?.position = target
+                driverMarker?.apply {
+                    position = target
+                    rotation = correctedRotation
+                }
                 mapView.invalidate()
             }
             return@LaunchedEffect
@@ -319,7 +330,7 @@ fun OSMDeliveryMap(
             withContext(Dispatchers.Main) {
                 driverMarker?.apply {
                     position = GeoPoint(interpLat, interpLng)
-                    rotation = routeBearing
+                    rotation = correctedRotation
                 }
                 mapView.invalidate()
             }
@@ -404,6 +415,41 @@ fun OSMDeliveryMap(
             },
             modifier = Modifier.fillMaxSize()
         )
+
+        // ── Route loading spinner overlay card
+        if (isRouteLoading) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.25f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+                    modifier = Modifier.padding(16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(20.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(
+                            color = Color(0xFFFC8019), // BiteCraft Orange
+                            modifier = Modifier.size(24.dp),
+                            strokeWidth = 3.dp
+                        )
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Text(
+                            "Calculating delivery route…",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+        }
 
         // ── Current Location FAB
         FloatingActionButton(
