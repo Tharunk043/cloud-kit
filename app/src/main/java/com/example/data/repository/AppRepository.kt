@@ -986,19 +986,11 @@ class AppRepository(private val context: Context) {
                     }
                 }
             } catch (e: Exception) {
-                Log.w("AppRepository", "Failed to get remote wallet balance, falling back to local: ${e.message}")
+                Log.w("AppRepository", "Failed to get remote wallet balance, falling back to local cache: ${e.message}")
+                return@withContext user.walletBalance
             }
         }
-        val txs = dao.getWalletTransactions().first()
-        var balance = 0.0
-        txs.forEach {
-            if (it.type == "Deposit" || it.type == "Refund" || it.type == "Cashback") {
-                balance += it.amount
-            } else {
-                balance -= it.amount
-            }
-        }
-        balance
+        100.0
     }
 
     suspend fun addWalletFunds(amount: Double) = withContext(Dispatchers.IO) {

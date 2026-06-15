@@ -333,6 +333,9 @@ interface PlatformDao {
     @Query("SELECT * FROM users LIMIT 1")
     suspend fun getCurrentUser(): UserEntity?
 
+    @Query("SELECT * FROM users LIMIT 1")
+    fun observeCurrentUser(): Flow<UserEntity?>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertUser(user: UserEntity): Long
 

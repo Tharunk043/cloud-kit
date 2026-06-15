@@ -196,18 +196,10 @@ class PlatformViewModel(application: Application) : AndroidViewModel(application
     val paymentMethods: StateFlow<List<PaymentMethodEntity>> = repository.paymentMethods
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    // Wallet balance
-    val walletBalance = walletTx.map { txList ->
-        var bal = 0.0
-        txList.forEach {
-            if (it.type == "Deposit" || it.type == "Refund" || it.type == "Cashback") {
-                bal += it.amount
-            } else {
-                bal -= it.amount
-            }
-        }
-        bal
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+    // Wallet balance (Observe the UserEntity in Room directly to always stay synchronized with the remote balance)
+    val walletBalance: StateFlow<Double> = repository.dao.observeCurrentUser()
+        .map { user -> user?.walletBalance ?: 100.0 }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 100.0)
 
     // Total family spending
     val totalFamilySpend = familyMembers.map { members ->
