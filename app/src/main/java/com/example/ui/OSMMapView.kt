@@ -169,6 +169,50 @@ private fun calculateBearing(start: GeoPoint, end: GeoPoint): Float {
     return ((Math.toDegrees(brng) + 360) % 360).toFloat()
 }
 
+private class BoxedGeoPoint(var value: GeoPoint? = null)
+
+private data class SnappedPoint(val point: GeoPoint, val segmentIdx: Int)
+
+private fun normalizeDegrees(deg: Float): Float {
+    return ((deg % 360f) + 360f) % 360f
+}
+
+private fun snapToRoute(p: GeoPoint, route: List<GeoPoint>): SnappedPoint {
+    if (route.isEmpty()) return SnappedPoint(p, -1)
+    if (route.size == 1) return SnappedPoint(route[0], 0)
+    var minDistanceSq = Double.MAX_VALUE
+    var bestPoint = route[0]
+    var bestSegmentIdx = 0
+    
+    for (i in 0 until route.size - 1) {
+        val a = route[i]
+        val b = route[i + 1]
+        
+        val dLat = b.latitude - a.latitude
+        val dLng = b.longitude - a.longitude
+        val lenSq = dLat * dLat + dLng * dLng
+        
+        val proj = if (lenSq == 0.0) {
+            a
+        } else {
+            val uLat = p.latitude - a.latitude
+            val uLng = p.longitude - a.longitude
+            val t = ((uLat * dLat + uLng * dLng) / lenSq).coerceIn(0.0, 1.0)
+            GeoPoint(a.latitude + t * dLat, a.longitude + t * dLng)
+        }
+        
+        val distLat = p.latitude - proj.latitude
+        val distLng = p.longitude - proj.longitude
+        val distSq = distLat * distLat + distLng * distLng
+        if (distSq < minDistanceSq) {
+            minDistanceSq = distSq
+            bestPoint = proj
+            bestSegmentIdx = i
+        }
+    }
+    return SnappedPoint(bestPoint, bestSegmentIdx)
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Fallback: straight-line polyline Restaurant → Rider → Customer
 // ─────────────────────────────────────────────────────────────────────────────
@@ -232,6 +276,7 @@ fun OSMDeliveryMap(
     var locationOverlay by remember { mutableStateOf<MyLocationNewOverlay?>(null) }
     var routePoints by remember { mutableStateOf<List<GeoPoint>>(emptyList()) }
     var isRouteLoading by remember { mutableStateOf(false) }
+    val prevDriverPos = remember { BoxedGeoPoint() }
 
     // Lifecycle management for MapView
     DisposableEffect(lifecycleOwner) {
@@ -273,68 +318,170 @@ fun OSMDeliveryMap(
         }
     }
 
-    // Previous driver position for smooth interpolation
-    var prevDriverPos by remember { mutableStateOf<GeoPoint?>(null) }
-
-    // Animate rider marker along route when driverLat/driverLng changes.
-    // Bearing is derived from the nearest route segment so it matches road direction exactly.
+    // Animate rider marker along the actual road segments of the OSRM route.
+    // Calculates segment bearings and smoothly interpolates rotation to steer naturally into turns.
     LaunchedEffect(driverLat, driverLng, driverMarker) {
         if (driverMarker == null) return@LaunchedEffect
         val target = GeoPoint(driverLat, driverLng)
-        val start = prevDriverPos ?: GeoPoint(driverLat, driverLng)
-        prevDriverPos = target
-
-        // Find bearing from the nearest route segment (so heading matches road)
-        val routeBearing: Float = if (routePoints.size >= 2) {
-            // Find route point closest to 'target'
-            var nearestIdx = 0
-            var nearestDist = Double.MAX_VALUE
-            routePoints.forEachIndexed { idx, pt ->
-                val dLat = pt.latitude - target.latitude
-                val dLng = pt.longitude - target.longitude
-                val dist = dLat * dLat + dLng * dLng
-                if (dist < nearestDist) { nearestDist = dist; nearestIdx = idx }
-            }
-            // Use segment ahead of nearest point
-            val fromPt = routePoints[nearestIdx]
-            val toPt = routePoints[minOf(nearestIdx + 1, routePoints.size - 1)]
-            calculateBearing(fromPt, toPt)
-        } else if (start.latitude != target.latitude || start.longitude != target.longitude) {
-            calculateBearing(start, target)
-        } else {
-            driverMarker?.rotation ?: 0f
-        }
-
-        // Apply a 180 degrees offset because the bike PNG points South (downwards) natively.
-        // This ensures the front wheel points in the correct direction of travel.
-        val correctedRotation = (routeBearing + 180f) % 360f
+        val start = prevDriverPos.value ?: GeoPoint(driverLat, driverLng)
+        prevDriverPos.value = target
 
         if (start.latitude == target.latitude && start.longitude == target.longitude) {
             // No movement — just ensure marker is at correct position and rotated
             withContext(Dispatchers.Main) {
                 driverMarker?.apply {
-                    position = target
-                    rotation = correctedRotation
+                    val snapped = if (routePoints.size >= 2) snapToRoute(target, routePoints).point else target
+                    position = snapped
+                    setAnchor(0.5f, 0.5f)
+                    val routeBearing = if (routePoints.size >= 2) {
+                        calculateBearing(routePoints[0], routePoints[1])
+                    } else 0f
+                    rotation = normalizeDegrees(routeBearing + 180f)
                 }
                 mapView.invalidate()
             }
             return@LaunchedEffect
         }
 
-        // Smoothly interpolate from start to target over 20 steps (~1 second total)
-        val steps = 20
-        for (i in 1..steps) {
-            val fraction = i.toDouble() / steps
-            val interpLat = start.latitude + (target.latitude - start.latitude) * fraction
-            val interpLng = start.longitude + (target.longitude - start.longitude) * fraction
+        // Construct the road path from start to target snapped onto the routePoints list
+        val path = mutableListOf<GeoPoint>()
+        if (routePoints.size >= 2) {
+            val startSnap = snapToRoute(start, routePoints)
+            val targetSnap = snapToRoute(target, routePoints)
+            
+            path.add(startSnap.point)
+            if (startSnap.segmentIdx < targetSnap.segmentIdx) {
+                for (idx in (startSnap.segmentIdx + 1)..targetSnap.segmentIdx) {
+                    path.add(routePoints[idx])
+                }
+            } else if (startSnap.segmentIdx > targetSnap.segmentIdx) {
+                for (idx in (startSnap.segmentIdx) downTo (targetSnap.segmentIdx + 1)) {
+                    path.add(routePoints[idx])
+                }
+            }
+            path.add(targetSnap.point)
+        } else {
+            path.add(start)
+            path.add(target)
+        }
+
+        // Calculate total distance along the gathered segments
+        var totalDist = 0.0
+        for (i in 0 until (path.size - 1)) {
+            val p1 = path[i]
+            val p2 = path[i + 1]
+            val dLat = p2.latitude - p1.latitude
+            val dLng = p2.longitude - p1.longitude
+            totalDist += Math.sqrt(dLat * dLat + dLng * dLng)
+        }
+
+        if (totalDist == 0.0) {
             withContext(Dispatchers.Main) {
                 driverMarker?.apply {
-                    position = GeoPoint(interpLat, interpLng)
-                    rotation = correctedRotation
+                    val snapped = if (routePoints.size >= 2) snapToRoute(target, routePoints).point else target
+                    position = snapped
+                    setAnchor(0.5f, 0.5f)
+                    val segmentBearing = if (routePoints.size >= 2) {
+                        val snap = snapToRoute(target, routePoints)
+                        val idx = snap.segmentIdx.coerceIn(0, routePoints.size - 2)
+                        calculateBearing(routePoints[idx], routePoints[idx + 1])
+                    } else {
+                        calculateBearing(start, target)
+                    }
+                    rotation = normalizeDegrees(segmentBearing + 180f)
                 }
                 mapView.invalidate()
             }
-            kotlinx.coroutines.delay(50L)
+            return@LaunchedEffect
+        }
+
+        val steps = 50
+        var currentSegmentIdx = 0
+        var segmentStartPos = path[0]
+        var segmentEndPos = path[1]
+        var segmentDist = 0.0
+
+        fun updateSegment(idx: Int) {
+            currentSegmentIdx = idx
+            segmentStartPos = path[idx]
+            segmentEndPos = path[idx + 1]
+            val dLat = segmentEndPos.latitude - segmentStartPos.latitude
+            val dLng = segmentEndPos.longitude - segmentStartPos.longitude
+            segmentDist = Math.sqrt(dLat * dLat + dLng * dLng)
+        }
+        updateSegment(0)
+
+        var distanceTraveled = 0.0
+        var currentRotation = driverMarker?.rotation ?: 0f
+
+        for (step in 1..steps) {
+            val fraction = step.toDouble() / steps
+            val targetDistance = fraction * totalDist
+
+            // Advance segments if we have traveled past the current segment boundary
+            while (targetDistance > (distanceTraveled + segmentDist) && currentSegmentIdx < (path.size - 2)) {
+                distanceTraveled += segmentDist
+                updateSegment(currentSegmentIdx + 1)
+            }
+
+            // Calculate interpolation factor within the current segment
+            val segmentFraction = if (segmentDist > 0.0) {
+                ((targetDistance - distanceTraveled) / segmentDist).coerceIn(0.0, 1.0)
+            } else 1.0
+
+            val interpLat = segmentStartPos.latitude + (segmentEndPos.latitude - segmentStartPos.latitude) * segmentFraction
+            val interpLng = segmentStartPos.longitude + (segmentEndPos.longitude - segmentStartPos.longitude) * segmentFraction
+
+            // Calculate segment bearing and apply look-ahead turn blending
+            val currentBearing = calculateBearing(segmentStartPos, segmentEndPos)
+            val targetBearing = if (currentSegmentIdx < path.size - 2) {
+                val nextStart = path[currentSegmentIdx + 1]
+                val nextEnd = path[currentSegmentIdx + 2]
+                val nextBearing = calculateBearing(nextStart, nextEnd)
+                
+                // Blend starting at 65% through current segment
+                val blendStart = 0.65
+                val blendFactor = if (segmentFraction > blendStart) {
+                    ((segmentFraction - blendStart) / (1.0 - blendStart)).toFloat().coerceIn(0f, 1f)
+                } else 0f
+                
+                var diffBrng = nextBearing - currentBearing
+                while (diffBrng < -180f) diffBrng += 360f
+                while (diffBrng > 180f) diffBrng -= 360f
+                
+                normalizeDegrees(currentBearing + diffBrng * blendFactor)
+            } else {
+                currentBearing
+            }
+
+            val targetRotation = normalizeDegrees(targetBearing + 180f)
+
+            // Smoothly rotate the marker using a low-pass angular filter (steer into turns)
+            var diff = targetRotation - currentRotation
+            while (diff < -180f) diff += 360f
+            while (diff > 180f) diff -= 360f
+
+            currentRotation = normalizeDegrees(currentRotation + diff * 0.18f)
+
+            // Leaning effect: shift the horizontal anchor based on turning rate (diff)
+            val leanFactor = (diff * 0.003f).coerceIn(-0.1f, 0.1f)
+            val anchorU = 0.5f - leanFactor
+
+            withContext(Dispatchers.Main) {
+                driverMarker?.apply {
+                    position = GeoPoint(interpLat, interpLng)
+                    rotation = currentRotation
+                    setAnchor(anchorU, 0.5f)
+                }
+                mapView.invalidate()
+            }
+            kotlinx.coroutines.delay(75L) // 50 steps * 75ms = ~3.75s animation
+        }
+
+        // Reset anchor after animation loop finishes
+        withContext(Dispatchers.Main) {
+            driverMarker?.setAnchor(0.5f, 0.5f)
+            mapView.invalidate()
         }
     }
 
