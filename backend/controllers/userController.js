@@ -46,8 +46,8 @@ exports.syncProfile = async (req, res, next) => {
 
     // Upsert: insert new user OR update last_login + name/email if phone already exists
     const upsertRes = await pool.query(
-      `INSERT INTO users (id, phone, name, email, wallet_balance, is_verified, created_at, last_login_at)
-       VALUES ($1, $2, $3, $4, 100.0, TRUE, $5, $5)
+      `INSERT INTO users (id, phone, name, email, wallet_balance, is_verified, created_at, last_login_at, updated_at)
+       VALUES ($1, $2, $3, $4, 100.0, TRUE, $5, $5, $5)
        ON CONFLICT (phone) DO UPDATE SET
          last_login_at = EXCLUDED.last_login_at,
          name = CASE WHEN EXCLUDED.name <> '' THEN EXCLUDED.name ELSE users.name END,
@@ -108,8 +108,8 @@ exports.getWalletTransactions = async (req, res, next) => {
       const userId = crypto.randomUUID();
       const now = Date.now();
       const insertRes = await pool.query(
-        `INSERT INTO users (id, phone, name, wallet_balance, is_verified, created_at, last_login_at)
-         VALUES ($1, $2, $2, 100.0, TRUE, $3, $3)
+        `INSERT INTO users (id, phone, name, wallet_balance, is_verified, created_at, last_login_at, updated_at)
+         VALUES ($1, $2, $2, 100.0, TRUE, $3, $3, $3)
          ON CONFLICT (phone) DO UPDATE SET last_login_at = EXCLUDED.last_login_at
          RETURNING *;`,
         [userId, phone, now]

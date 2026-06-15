@@ -76,6 +76,9 @@ const initDB = async () => {
     await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet_balance NUMERIC DEFAULT 100.0;');
     await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at BIGINT DEFAULT 0;');
     await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at BIGINT DEFAULT 0;');
+    await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at BIGINT DEFAULT 0;');
+    await client.query('ALTER TABLE users ALTER COLUMN updated_at SET DEFAULT 0;');
+    await client.query('ALTER TABLE users ALTER COLUMN updated_at DROP NOT NULL;');
     // Add unique constraint on phone if not already present (safe to run multiple times)
     await client.query(`
       DO $$ BEGIN
