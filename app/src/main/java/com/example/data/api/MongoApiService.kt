@@ -6,7 +6,7 @@ import retrofit2.Response
 import retrofit2.http.*
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Data Models matching your MongoDB Atlas "mydb" schema
+// Data Models matching your Supabase PostgreSQL schemas
 // ─────────────────────────────────────────────────────────────────────────────
 
 @JsonClass(generateAdapter = true)
@@ -28,7 +28,7 @@ data class MongoRestaurant(
 
 @JsonClass(generateAdapter = true)
 data class MongoOrder(
-    @Json(name = "_id")           val id: String = "",
+    @Json(name = "id")            val id: String = "",
     @Json(name = "userId")        val userId: String = "",
     @Json(name = "restaurantId")  val restaurantId: String = "",
     @Json(name = "items")         val items: List<MongoOrderItem> = emptyList(),
@@ -42,7 +42,10 @@ data class MongoOrder(
     @Json(name = "customerLng")   val customerLng: Double = 0.0,
     @Json(name = "restaurantLat") val restaurantLat: Double = 0.0,
     @Json(name = "restaurantLng") val restaurantLng: Double = 0.0,
-    @Json(name = "createdAt")     val createdAt: Long = 0L
+    @Json(name = "createdAt")     val createdAt: Long = 0L,
+    @Json(name = "ratingGiven")   val ratingGiven: Float = 0.0f,
+    @Json(name = "reviewText")    val reviewText: String = "",
+    @Json(name = "reviewSentiment") val reviewSentiment: String = "Neutral"
 )
 
 @JsonClass(generateAdapter = true)
@@ -55,6 +58,7 @@ data class MongoOrderItem(
 
 @JsonClass(generateAdapter = true)
 data class PlaceOrderRequest(
+    @Json(name = "userId")          val userId: String? = null,
     @Json(name = "restaurantId")    val restaurantId: String,
     @Json(name = "items")           val items: List<MongoOrderItem>,
     @Json(name = "totalAmount")     val totalAmount: Double,
@@ -71,7 +75,7 @@ data class ApiResponse<T>(
     @Json(name = "success") val success: Boolean = false,
     @Json(name = "data")    val data: T? = null,
     @Json(name = "message") val message: String = "",
-    @Json(name = "cached")  val cached: Boolean = false  // Redis cache hit indicator
+    @Json(name = "cached")  val cached: Boolean = false
 )
 
 @JsonClass(generateAdapter = true)
@@ -82,10 +86,79 @@ data class LocationUpdateRequest(
     @Json(name = "address") val address: String
 )
 
+@JsonClass(generateAdapter = true)
+data class SyncUserRequest(
+    @Json(name = "phone") val phone: String,
+    @Json(name = "name")  val name: String,
+    @Json(name = "email") val email: String = ""
+)
+
+@JsonClass(generateAdapter = true)
+data class MongoUser(
+    @Json(name = "phone")            val phone: String,
+    @Json(name = "name")             val name: String = "",
+    @Json(name = "email")            val email: String = "",
+    @Json(name = "avatarUrl")        val avatarUrl: String = "",
+    @Json(name = "sessionToken")     val sessionToken: String = "",
+    @Json(name = "isVerified")       val isVerified: Boolean = false,
+    @Json(name = "defaultAddressId") val defaultAddressId: Int = -1,
+    @Json(name = "isGoldMember")     val isGoldMember: Boolean = false,
+    @Json(name = "walletBalance")    val walletBalance: Double = 0.0,
+    @Json(name = "createdAt")        val createdAt: Long = 0L,
+    @Json(name = "lastLoginAt")      val lastLoginAt: Long = 0L
+)
+
+@JsonClass(generateAdapter = true)
+data class MongoWalletTransaction(
+    @Json(name = "type")        val type: String,
+    @Json(name = "amount")      val amount: Double,
+    @Json(name = "description") val description: String,
+    @Json(name = "timestamp")   val timestamp: Long,
+    @Json(name = "memberName")  val memberName: String = ""
+)
+
+@JsonClass(generateAdapter = true)
+data class WalletSyncResponse(
+    @Json(name = "walletBalance") val walletBalance: Double,
+    @Json(name = "transactions")  val transactions: List<MongoWalletTransaction>
+)
+
+@JsonClass(generateAdapter = true)
+data class AddWalletTxRequest(
+    @Json(name = "type")        val type: String,
+    @Json(name = "amount")      val amount: Double,
+    @Json(name = "description") val description: String,
+    @Json(name = "memberName")  val memberName: String = ""
+)
+
+@JsonClass(generateAdapter = true)
+data class MongoAddress(
+    @Json(name = "label")       val label: String,
+    @Json(name = "fullAddress") val fullAddress: String,
+    @Json(name = "latitude")    val latitude: Double,
+    @Json(name = "longitude")   val longitude: Double,
+    @Json(name = "isDefault")   val isDefault: Boolean,
+    @Json(name = "createdAt")   val createdAt: Long
+)
+
+@JsonClass(generateAdapter = true)
+data class AddAddressRequest(
+    @Json(name = "label")       val label: String,
+    @Json(name = "fullAddress") val fullAddress: String,
+    @Json(name = "latitude")    val latitude: Double,
+    @Json(name = "longitude")   val longitude: Double,
+    @Json(name = "isDefault")   val isDefault: Boolean
+)
+
+@JsonClass(generateAdapter = true)
+data class SubmitReviewRequest(
+    @Json(name = "rating")          val rating: Float,
+    @Json(name = "reviewText")     val reviewText: String,
+    @Json(name = "sentiment")      val sentiment: String
+)
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Retrofit Service Interface
-// Your Spring Boot backend → MongoDB Atlas + Redis
-// Base URL configured in AppRepository / NetworkModule
 // ─────────────────────────────────────────────────────────────────────────────
 interface MongoApiService {
 
@@ -118,13 +191,54 @@ interface MongoApiService {
         @Path("id") orderId: String
     ): Response<ApiResponse<MongoOrder>>
 
-    // ── Location update
+    @POST("api/orders/{id}/review")
+    suspend fun submitOrderReview(
+        @Path("id") orderId: String,
+        @Body request: SubmitReviewRequest
+    ): Response<ApiResponse<MongoOrder>>
+
+    // ── User location and profile sync
+    @POST("api/users/profile")
+    suspend fun syncUserProfile(
+        @Body request: SyncUserRequest
+    ): Response<ApiResponse<MongoUser>>
+
     @PUT("api/users/location")
     suspend fun updateUserLocation(
         @Body request: LocationUpdateRequest
     ): Response<ApiResponse<Unit>>
 
-    // ── Health check (also warms Redis)
+    // ── Wallet Sync
+    @GET("api/users/{phone}/wallet")
+    suspend fun getWalletDetails(
+        @Path("phone") phone: String
+    ): Response<ApiResponse<WalletSyncResponse>>
+
+    @POST("api/users/{phone}/wallet")
+    suspend fun addWalletTransaction(
+        @Path("phone") phone: String,
+        @Body request: AddWalletTxRequest
+    ): Response<ApiResponse<WalletSyncResponse>>
+
+    // ── Address Sync
+    @GET("api/users/{phone}/addresses")
+    suspend fun getAddresses(
+        @Path("phone") phone: String
+    ): Response<ApiResponse<List<MongoAddress>>>
+
+    @POST("api/users/{phone}/addresses")
+    suspend fun addAddress(
+        @Path("phone") phone: String,
+        @Body request: AddAddressRequest
+    ): Response<ApiResponse<MongoAddress>>
+
+    @DELETE("api/users/{phone}/addresses/{id}")
+    suspend fun deleteAddress(
+        @Path("phone") phone: String,
+        @Path("id") addressId: String
+    ): Response<ApiResponse<Unit>>
+
+    // ── Health check
     @GET("actuator/health")
     suspend fun healthCheck(): Response<Map<String, Any>>
 }

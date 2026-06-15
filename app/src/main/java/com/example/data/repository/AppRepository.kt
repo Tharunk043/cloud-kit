@@ -38,9 +38,9 @@ data class SplitBillEntry(
 )
 
 class AppRepository(private val context: Context) {
-    // Retrofit instance to connect to host machine (Node.js backend) from Android emulator
+    // Retrofit instance to connect to Render hosted backend
     private val retrofit = retrofit2.Retrofit.Builder()
-        .baseUrl("http://10.0.2.2:8080/")
+        .baseUrl("https://cloud-kit.onrender.com/")
         .addConverterFactory(retrofit2.converter.moshi.MoshiConverterFactory.create(
             com.squareup.moshi.Moshi.Builder()
                 .add(com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory())
@@ -326,30 +326,6 @@ class AppRepository(private val context: Context) {
     }
 
     // Custom Helpers
-    suspend fun getWalletBalance(): Double = withContext(Dispatchers.IO) {
-        val txs = dao.getWalletTransactions().first()
-        var balance = 0.0
-        txs.forEach {
-            if (it.type == "Deposit" || it.type == "Refund" || it.type == "Cashback") {
-                balance += it.amount
-            } else {
-                balance -= it.amount
-            }
-        }
-        balance
-    }
-
-    suspend fun addWalletFunds(amount: Double) = withContext(Dispatchers.IO) {
-        dao.insertWalletTransaction(
-            WalletTransactionEntity(
-                type = "Deposit",
-                amount = amount,
-                description = "Wallet fund deposit via UPI/Card",
-                timestamp = System.currentTimeMillis()
-            )
-        )
-    }
-
     suspend fun addCartItem(dish: DishEntity, quantity: Int, spice: String, addons: String, notes: String) = withContext(Dispatchers.IO) {
         val rest = dao.getRestaurantById(dish.restaurantId) ?: return@withContext
         val existing = dao.getCartItems().first()
@@ -478,6 +454,7 @@ class AppRepository(private val context: Context) {
 
         var localOrderId = 0
 
+        val user = dao.getCurrentUser()
         try {
             val itemsList = items.map {
                 com.example.data.api.MongoOrderItem(
@@ -488,6 +465,7 @@ class AppRepository(private val context: Context) {
                 )
             }
             val placeRequest = com.example.data.api.PlaceOrderRequest(
+                userId = user?.phone,
                 restaurantId = "$restId",
                 items = itemsList,
                 totalAmount = totalAmount,
@@ -528,12 +506,17 @@ class AppRepository(private val context: Context) {
                     localOrderId = dao.insertOrder(newOrder).toInt()
                     mongoOrderIdMap[localOrderId] = mongoOrder.id
                     dao.clearCart()
+                    
+                    if (user != null) {
+                        syncWalletTransactions(user.phone)
+                    }
+
                     startServerDrivenTracking(localOrderId, mongoOrder.id)
                     return@withContext localOrderId
                 }
             }
         } catch (e: Exception) {
-            Log.e("AppRepository", "Failed to checkout on MongoDB backend, using local simulation fallback: ${e.message}")
+            Log.e("AppRepository", "Failed to checkout on Supabase backend, using local simulation fallback: ${e.message}")
         }
 
         // FALLBACK: If API fails, run the original local Room simulation
@@ -699,7 +682,40 @@ class AppRepository(private val context: Context) {
         val sentiment = GeminiClient.analyzeSentiment(reviewText)
         dao.submitOrderReview(orderId, rating, reviewText, sentiment)
 
+        val uuid = mongoOrderIdMap[orderId]
+        if (uuid != null) {
+            try {
+                apiService.submitOrderReview(
+                    uuid,
+                    com.example.data.api.SubmitReviewRequest(
+                        rating = rating,
+                        reviewText = reviewText,
+                        sentiment = sentiment
+                    )
+                )
+                Log.d("AppRepository", "Submitted order review to remote Supabase DB successfully")
+            } catch (e: Exception) {
+                Log.w("AppRepository", "Failed to submit review to remote Supabase DB: ${e.message}")
+            }
+        }
+
         if (sentiment == "Positive") {
+            val user = dao.getCurrentUser()
+            if (user != null) {
+                try {
+                    apiService.addWalletTransaction(
+                        user.phone,
+                        com.example.data.api.AddWalletTxRequest(
+                            type = "Cashback",
+                            amount = 2.00,
+                            description = "Loyalty feedback bonus for order #$orderId!"
+                        )
+                    )
+                    syncWalletTransactions(user.phone)
+                } catch (e: Exception) {
+                    Log.w("AppRepository", "Failed to sync cashback wallet transaction: ${e.message}")
+                }
+            }
             dao.insertWalletTransaction(
                 WalletTransactionEntity(
                     type = "Cashback",
@@ -792,23 +808,51 @@ class AppRepository(private val context: Context) {
     // --- User Authentication ---
     suspend fun loginOrCreateUser(phone: String, name: String): UserEntity = withContext(Dispatchers.IO) {
         val existing = dao.getUserByPhone(phone)
-        if (existing != null) {
-            val token = java.util.UUID.randomUUID().toString()
-            dao.updateUserSession(phone, token, System.currentTimeMillis())
-            if (name.isNotEmpty() && existing.name.isEmpty()) {
-                dao.updateUserProfile(phone, name, existing.email)
+        val token = java.util.UUID.randomUUID().toString()
+
+        var remoteUser: com.example.data.api.MongoUser? = null
+        try {
+            val response = apiService.syncUserProfile(com.example.data.api.SyncUserRequest(phone, name))
+            if (response.isSuccessful && response.body()?.success == true) {
+                remoteUser = response.body()?.data
+                Log.d("AppRepository", "Synced profile with remote Supabase DB successfully: balance = ${remoteUser?.walletBalance}")
             }
-            existing.copy(name = name.ifEmpty { existing.name })
+        } catch (e: Exception) {
+            Log.w("AppRepository", "Failed to sync profile with remote Supabase: ${e.message}")
+        }
+
+        if (existing != null) {
+            val updatedUser = existing.copy(
+                sessionToken = token,
+                name = remoteUser?.name ?: name,
+                walletBalance = remoteUser?.walletBalance ?: existing.walletBalance,
+                lastLoginAt = System.currentTimeMillis()
+            )
+            dao.insertUser(updatedUser)
+            
+            if (remoteUser != null) {
+                syncWalletTransactions(phone)
+                syncAddressesFromRemote(phone)
+            }
+            updatedUser
         } else {
-            val token = java.util.UUID.randomUUID().toString()
             val newUser = UserEntity(
                 phone = phone,
-                name = name,
+                name = remoteUser?.name ?: name,
                 sessionToken = token,
-                isVerified = true
+                isVerified = true,
+                walletBalance = remoteUser?.walletBalance ?: 100.0,
+                createdAt = remoteUser?.createdAt ?: System.currentTimeMillis(),
+                lastLoginAt = System.currentTimeMillis()
             )
             val id = dao.insertUser(newUser).toInt()
-            newUser.copy(id = id)
+            val resolved = newUser.copy(id = id)
+            
+            if (remoteUser != null) {
+                syncWalletTransactions(phone)
+                syncAddressesFromRemote(phone)
+            }
+            resolved
         }
     }
 
@@ -822,32 +866,177 @@ class AppRepository(private val context: Context) {
             fullAddress = fullAddress,
             latitude = lat,
             longitude = lng,
-            isDefault = isFirst // first saved address becomes default automatically
+            isDefault = isFirst
         )
         val newId = dao.insertSavedAddress(addr).toInt()
-        if (!isFirst) {
-            // If there's already a default, keep it (don't auto-replace)
-        } else {
-            dao.updateDefaultAddress(dao.getUserByPhone("$userId")?.phone ?: "", newId)
-        }
 
-        // Synchronize saved address location with remote MongoDB Atlas backend
-        try {
-            apiService.updateUserLocation(
-                com.example.data.api.LocationUpdateRequest(
-                    userId = "$userId",
-                    lat = lat,
-                    lng = lng,
-                    address = fullAddress
+        val user = dao.getUserByPhone("$userId") ?: dao.getCurrentUser()
+        if (user != null) {
+            if (isFirst) {
+                dao.updateDefaultAddress(user.phone, newId)
+            }
+            try {
+                apiService.addAddress(
+                    user.phone,
+                    com.example.data.api.AddAddressRequest(
+                        label = label,
+                        fullAddress = fullAddress,
+                        latitude = lat,
+                        longitude = lng,
+                        isDefault = isFirst
+                    )
                 )
-            )
-            Log.d("AppRepository", "Synced address to remote MongoDB backend")
-        } catch (e: Exception) {
-            Log.w("AppRepository", "Failed to sync address to remote MongoDB backend: ${e.message}")
+                apiService.updateUserLocation(
+                    com.example.data.api.LocationUpdateRequest(
+                        userId = user.phone,
+                        lat = lat,
+                        lng = lng,
+                        address = fullAddress
+                    )
+                )
+                Log.d("AppRepository", "Synced address to remote Supabase database")
+            } catch (e: Exception) {
+                Log.w("AppRepository", "Failed to sync address to remote Supabase: ${e.message}")
+            }
         }
+    }
 
-        Log.d("AppRepository", "Saved address '$label' for user $userId: $fullAddress")
+    // --- Sync Helpers ---
+    private suspend fun syncWalletTransactions(phone: String) {
+        try {
+            val response = apiService.getWalletDetails(phone)
+            if (response.isSuccessful && response.body()?.success == true) {
+                val data = response.body()?.data
+                if (data != null) {
+                    val user = dao.getUserByPhone(phone)
+                    if (user != null) {
+                        dao.insertUser(user.copy(walletBalance = data.walletBalance))
+                    }
+                    dao.clearWalletTransactions()
+                    data.transactions.forEach { tx ->
+                        dao.insertWalletTransaction(
+                            WalletTransactionEntity(
+                                type = tx.type,
+                                amount = tx.amount,
+                                description = tx.description,
+                                timestamp = tx.timestamp,
+                                memberName = tx.memberName
+                            )
+                        )
+                    }
+                    Log.d("AppRepository", "Synchronized wallet transactions from remote Supabase DB")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("AppRepository", "Failed to sync wallet transactions: ${e.message}")
+        }
+    }
+
+    private suspend fun syncAddressesFromRemote(phone: String) {
+        try {
+            val response = apiService.getAddresses(phone)
+            if (response.isSuccessful && response.body()?.success == true) {
+                val data = response.body()?.data
+                if (data != null) {
+                    val user = dao.getUserByPhone(phone) ?: return
+                    dao.clearSavedAddresses(user.id)
+                    data.forEach { addr ->
+                        val roomAddr = SavedAddressEntity(
+                            userId = user.id,
+                            label = addr.label,
+                            fullAddress = addr.fullAddress,
+                            latitude = addr.latitude,
+                            longitude = addr.longitude,
+                            isDefault = addr.isDefault
+                        )
+                        dao.insertSavedAddress(roomAddr)
+                    }
+                    Log.d("AppRepository", "Synchronized addresses from remote Supabase DB")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("AppRepository", "Failed to sync addresses: ${e.message}")
+        }
+    }
+
+    suspend fun getWalletBalance(): Double = withContext(Dispatchers.IO) {
+        val user = dao.getCurrentUser()
+        if (user != null) {
+            try {
+                val response = apiService.getWalletDetails(user.phone)
+                if (response.isSuccessful && response.body()?.success == true) {
+                    val data = response.body()?.data
+                    if (data != null) {
+                        dao.clearWalletTransactions()
+                        data.transactions.forEach { tx ->
+                            dao.insertWalletTransaction(
+                                WalletTransactionEntity(
+                                    type = tx.type,
+                                    amount = tx.amount,
+                                    description = tx.description,
+                                    timestamp = tx.timestamp,
+                                    memberName = tx.memberName
+                                )
+                            )
+                        }
+                        dao.insertUser(user.copy(walletBalance = data.walletBalance))
+                        return@withContext data.walletBalance
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("AppRepository", "Failed to get remote wallet balance, falling back to local: ${e.message}")
+            }
+        }
+        val txs = dao.getWalletTransactions().first()
+        var balance = 0.0
+        txs.forEach {
+            if (it.type == "Deposit" || it.type == "Refund" || it.type == "Cashback") {
+                balance += it.amount
+            } else {
+                balance -= it.amount
+            }
+        }
+        balance
+    }
+
+    suspend fun addWalletFunds(amount: Double) = withContext(Dispatchers.IO) {
+        val user = dao.getCurrentUser()
+        if (user != null) {
+            try {
+                val response = apiService.addWalletTransaction(
+                    user.phone,
+                    com.example.data.api.AddWalletTxRequest(
+                        type = "Deposit",
+                        amount = amount,
+                        description = "Wallet fund deposit via UPI/Card"
+                    )
+                )
+                if (response.isSuccessful && response.body()?.success == true) {
+                    val data = response.body()?.data
+                    if (data != null) {
+                        dao.insertWalletTransaction(
+                            WalletTransactionEntity(
+                                type = "Deposit",
+                                amount = amount,
+                                description = "Wallet fund deposit via UPI/Card",
+                                timestamp = System.currentTimeMillis()
+                            )
+                        )
+                        dao.insertUser(user.copy(walletBalance = data.walletBalance))
+                        return@withContext
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w("AppRepository", "Failed to post remote wallet transaction: ${e.message}")
+            }
+        }
+        dao.insertWalletTransaction(
+            WalletTransactionEntity(
+                type = "Deposit",
+                amount = amount,
+                description = "Wallet fund deposit via UPI/Card",
+                timestamp = System.currentTimeMillis()
+            )
+        )
     }
 }
-
-

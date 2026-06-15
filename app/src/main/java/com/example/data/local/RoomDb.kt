@@ -262,6 +262,9 @@ interface PlatformDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertWalletTransaction(tx: WalletTransactionEntity)
 
+    @Query("DELETE FROM wallet_transactions")
+    suspend fun clearWalletTransactions()
+
     // Chat History
     @Query("SELECT * FROM chat_messages ORDER BY timestamp ASC")
     fun getChatMessages(): Flow<List<ChatMessageEntity>>
@@ -360,6 +363,9 @@ interface PlatformDao {
 
     @Query("DELETE FROM saved_addresses WHERE id = :id")
     suspend fun deleteAddress(id: Int)
+
+    @Query("DELETE FROM saved_addresses WHERE userId = :userId")
+    suspend fun clearSavedAddresses(userId: Int)
 }
 
 // --- App Database ---

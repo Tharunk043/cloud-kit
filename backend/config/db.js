@@ -47,13 +47,36 @@ const initDB = async () => {
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
         id VARCHAR(50) PRIMARY KEY,
+        phone VARCHAR(50),
+        name VARCHAR(100) DEFAULT '',
+        email VARCHAR(100) DEFAULT '',
+        avatar_url VARCHAR(255) DEFAULT '',
+        session_token VARCHAR(255) DEFAULT '',
+        is_verified BOOLEAN DEFAULT FALSE,
+        default_address_id INTEGER DEFAULT -1,
+        is_gold_member BOOLEAN DEFAULT FALSE,
+        wallet_balance NUMERIC DEFAULT 0.0,
+        created_at BIGINT DEFAULT 0,
+        last_login_at BIGINT DEFAULT 0,
         address TEXT DEFAULT '',
         latitude DOUBLE PRECISION DEFAULT 0.0,
         longitude DOUBLE PRECISION DEFAULT 0.0,
-        updated_at BIGINT NOT NULL
+        updated_at BIGINT DEFAULT 0
       );
     `);
-    console.log('Users table verified.');
+    // Alter statements to update table columns if they exist from legacy runs
+    await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50);');
+    await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS name VARCHAR(100) DEFAULT \'\';');
+    await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(100) DEFAULT \'\';');
+    await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url VARCHAR(255) DEFAULT \'\';');
+    await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS session_token VARCHAR(255) DEFAULT \'\';');
+    await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE;');
+    await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS default_address_id INTEGER DEFAULT -1;');
+    await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS is_gold_member BOOLEAN DEFAULT FALSE;');
+    await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet_balance NUMERIC DEFAULT 0.0;');
+    await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at BIGINT DEFAULT 0;');
+    await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at BIGINT DEFAULT 0;');
+    console.log('Users table and profile columns verified.');
 
     // 4. Create Orders Table
     await client.query(`
@@ -72,10 +95,46 @@ const initDB = async () => {
         customer_lng DOUBLE PRECISION DEFAULT 0.0,
         restaurant_lat DOUBLE PRECISION DEFAULT 0.0,
         restaurant_lng DOUBLE PRECISION DEFAULT 0.0,
+        created_at BIGINT NOT NULL,
+        rating_given REAL DEFAULT 0.0,
+        review_text TEXT DEFAULT '',
+        review_sentiment VARCHAR(50) DEFAULT 'Neutral'
+      );
+    `);
+    // Alter statements for orders rating fields
+    await client.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS rating_given REAL DEFAULT 0.0;');
+    await client.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS review_text TEXT DEFAULT \'\';');
+    await client.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS review_sentiment VARCHAR(50) DEFAULT \'Neutral\';');
+    console.log('Orders table and rating columns verified.');
+
+    // 4b. Create Wallet Transactions Table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS wallet_transactions (
+        id VARCHAR(50) PRIMARY KEY,
+        user_id VARCHAR(50) NOT NULL,
+        type VARCHAR(50) NOT NULL,
+        amount NUMERIC NOT NULL,
+        description TEXT DEFAULT '',
+        timestamp BIGINT NOT NULL,
+        member_name VARCHAR(100) DEFAULT ''
+      );
+    `);
+    console.log('Wallet transactions table verified.');
+
+    // 4c. Create Saved Addresses Table
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS saved_addresses (
+        id VARCHAR(50) PRIMARY KEY,
+        user_id VARCHAR(50) NOT NULL,
+        label VARCHAR(100) NOT NULL,
+        full_address TEXT NOT NULL,
+        latitude DOUBLE PRECISION NOT NULL,
+        longitude DOUBLE PRECISION NOT NULL,
+        is_default BOOLEAN DEFAULT FALSE,
         created_at BIGINT NOT NULL
       );
     `);
-    console.log('Orders table verified.');
+    console.log('Saved addresses table verified.');
 
     // 5. Seed restaurants if empty
     const resCount = await client.query('SELECT COUNT(*) FROM restaurants;');
