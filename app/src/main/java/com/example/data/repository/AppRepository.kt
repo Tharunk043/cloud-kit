@@ -870,7 +870,7 @@ class AppRepository(private val context: Context) {
         )
         val newId = dao.insertSavedAddress(addr).toInt()
 
-        val user = dao.getUserByPhone("$userId") ?: dao.getCurrentUser()
+        val user = dao.getUserById(userId) ?: dao.getCurrentUser()
         if (user != null) {
             if (isFirst) {
                 dao.updateDefaultAddress(user.phone, newId)

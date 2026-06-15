@@ -1,6 +1,5 @@
 const crypto = require('crypto');
 const { pool } = require('../config/db');
-const { publishEvent } = require('../config/kafka');
 
 // Helper to format database orders into Kotlin client DTOs
 const formatOrder = (dbOrder) => {
@@ -43,7 +42,7 @@ exports.placeOrder = async (req, res, next) => {
       restaurantLng
     } = req.body;
 
-    const userId = bodyUserId || req.user || 'tharun';
+    const userId = bodyUserId || req.user || 'guest';
     const orderId = crypto.randomUUID();
     const itemsJson = JSON.stringify(items);
     const createdAt = Date.now();
@@ -56,14 +55,14 @@ exports.placeOrder = async (req, res, next) => {
       if (paymentMethod === 'Wallet' || paymentMethod === 'Family Wallet') {
         const userRes = await client.query('SELECT wallet_balance FROM users WHERE phone = $1;', [userId]);
         if (userRes.rows.length === 0) {
-          throw new Error(`User profile for phone '${userId}' not found on Supabase database. Please login/sync first.`);
+          throw new Error(`User profile for phone '${userId}' not found. Please login first.`);
         }
         const balance = parseFloat(userRes.rows[0].wallet_balance);
         if (balance < parseFloat(totalAmount)) {
           throw new Error(`Insufficient wallet balance. Available: $${balance.toFixed(2)}, Required: $${parseFloat(totalAmount).toFixed(2)}`);
         }
         const newBalance = balance - parseFloat(totalAmount);
-        
+
         // Update user balance
         await client.query('UPDATE users SET wallet_balance = $1 WHERE phone = $2;', [newBalance, userId]);
 
@@ -98,12 +97,7 @@ exports.placeOrder = async (req, res, next) => {
       await client.query('COMMIT');
 
       const formatted = formatOrder(result.rows[0]);
-
-      // Publish event
-      await publishEvent('bitecraft-orders', orderId, {
-        eventType: 'OrderPlaced',
-        order: formatted
-      });
+      console.log(`[Order] Placed: orderId=${orderId}, userId=${userId}, amount=${totalAmount}, payment=${paymentMethod}`);
 
       res.json({
         success: true,
@@ -125,10 +119,10 @@ exports.placeOrder = async (req, res, next) => {
 // Get orders for a user
 exports.getUserOrders = async (req, res, next) => {
   try {
-    const userId = req.query.userId || req.user || 'tharun';
-    
+    const userId = req.query.userId || req.user || 'guest';
+
     const result = await pool.query(
-      'SELECT * FROM orders WHERE user_id = $1 ORDER BY created_at DESC;', 
+      'SELECT * FROM orders WHERE user_id = $1 ORDER BY created_at DESC;',
       [userId]
     );
 
@@ -166,15 +160,15 @@ exports.trackOrder = async (req, res, next) => {
     // Dynamic state machine simulation for order tracking
     if (status === 'Placed') {
       status = 'Confirmed';
-      await publishEvent('bitecraft-orders', id, { eventType: 'OrderConfirmed', order: formatOrder({ ...order, status }) });
+      console.log(`[Order] ${id} -> Confirmed`);
     } else if (status === 'Confirmed') {
       status = 'Cooking';
-      await publishEvent('bitecraft-orders', id, { eventType: 'OrderCooking', order: formatOrder({ ...order, status }) });
+      console.log(`[Order] ${id} -> Cooking`);
     } else if (status === 'Cooking') {
       status = 'OutForDelivery';
       driverLat = (order.restaurant_lat + order.customer_lat) / 2;
       driverLng = (order.restaurant_lng + order.customer_lng) / 2;
-      await publishEvent('bitecraft-orders', id, { eventType: 'OrderOutForDelivery', order: formatOrder({ ...order, status, driverLat, driverLng }) });
+      console.log(`[Order] ${id} -> OutForDelivery`);
     } else if (status === 'OutForDelivery') {
       const latDiff = order.customer_lat - driverLat;
       const lngDiff = order.customer_lng - driverLng;
@@ -183,7 +177,7 @@ exports.trackOrder = async (req, res, next) => {
         status = 'Delivered';
         driverLat = order.customer_lat;
         driverLng = order.customer_lng;
-        await publishEvent('bitecraft-orders', id, { eventType: 'OrderDelivered', order: formatOrder({ ...order, status, driverLat, driverLng }) });
+        console.log(`[Order] ${id} -> Delivered`);
       } else {
         // Move driver 50% closer
         driverLat = driverLat + latDiff * 0.5;
@@ -234,11 +228,7 @@ exports.updateStatus = async (req, res, next) => {
     }
 
     const formatted = formatOrder(result.rows[0]);
-
-    await publishEvent('bitecraft-orders', id, {
-      eventType: `OrderStatusUpdated-${status}`,
-      order: formatted
-    });
+    console.log(`[Order] Status updated: ${id} -> ${status}`);
 
     res.json({
       success: true,
@@ -276,6 +266,7 @@ exports.submitOrderReview = async (req, res, next) => {
     }
 
     const formatted = formatOrder(result.rows[0]);
+    console.log(`[Order] Review submitted for ${id}: rating=${rating}, sentiment=${sentiment}`);
 
     res.json({
       success: true,

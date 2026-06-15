@@ -47,7 +47,7 @@ const initDB = async () => {
     await client.query(`
       CREATE TABLE IF NOT EXISTS users (
         id VARCHAR(50) PRIMARY KEY,
-        phone VARCHAR(50),
+        phone VARCHAR(50) UNIQUE,
         name VARCHAR(100) DEFAULT '',
         email VARCHAR(100) DEFAULT '',
         avatar_url VARCHAR(255) DEFAULT '',
@@ -55,7 +55,7 @@ const initDB = async () => {
         is_verified BOOLEAN DEFAULT FALSE,
         default_address_id INTEGER DEFAULT -1,
         is_gold_member BOOLEAN DEFAULT FALSE,
-        wallet_balance NUMERIC DEFAULT 0.0,
+        wallet_balance NUMERIC DEFAULT 100.0,
         created_at BIGINT DEFAULT 0,
         last_login_at BIGINT DEFAULT 0,
         address TEXT DEFAULT '',
@@ -64,7 +64,7 @@ const initDB = async () => {
         updated_at BIGINT DEFAULT 0
       );
     `);
-    // Alter statements to update table columns if they exist from legacy runs
+    // Alter statements to add missing columns if they exist from legacy runs
     await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS phone VARCHAR(50);');
     await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS name VARCHAR(100) DEFAULT \'\';');
     await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS email VARCHAR(100) DEFAULT \'\';');
@@ -73,9 +73,23 @@ const initDB = async () => {
     await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS is_verified BOOLEAN DEFAULT FALSE;');
     await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS default_address_id INTEGER DEFAULT -1;');
     await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS is_gold_member BOOLEAN DEFAULT FALSE;');
-    await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet_balance NUMERIC DEFAULT 0.0;');
+    await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS wallet_balance NUMERIC DEFAULT 100.0;');
     await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at BIGINT DEFAULT 0;');
     await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at BIGINT DEFAULT 0;');
+    // Add unique constraint on phone if not already present (safe to run multiple times)
+    await client.query(`
+      DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'users_phone_unique'
+        ) THEN
+          -- Clean up any duplicate phone numbers before adding the unique constraint
+          DELETE FROM users WHERE id NOT IN (
+            SELECT MIN(id) FROM users GROUP BY phone
+          );
+          ALTER TABLE users ADD CONSTRAINT users_phone_unique UNIQUE (phone);
+        END IF;
+      END $$;
+    `);
     console.log('Users table and profile columns verified.');
 
     // 4. Create Orders Table

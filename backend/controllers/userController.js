@@ -1,7 +1,39 @@
 const crypto = require('crypto');
 const { pool } = require('../config/db');
 
-// Sync user profile
+// Helper to format a DB user row into the Kotlin DTO shape
+const formatUser = (user) => ({
+  phone: user.phone,
+  name: user.name || '',
+  email: user.email || '',
+  avatarUrl: user.avatar_url || '',
+  sessionToken: user.session_token || '',
+  isVerified: user.is_verified || false,
+  defaultAddressId: user.default_address_id || -1,
+  isGoldMember: user.is_gold_member || false,
+  walletBalance: parseFloat(user.wallet_balance || 0),
+  createdAt: parseInt(user.created_at || 0),
+  lastLoginAt: parseInt(user.last_login_at || 0)
+});
+
+// GET /api/users/:phone — fetch user profile
+exports.getProfile = async (req, res, next) => {
+  try {
+    const { phone } = req.params;
+    if (!phone) {
+      return res.status(400).json({ success: false, message: 'Phone is required' });
+    }
+    const userRes = await pool.query('SELECT * FROM users WHERE phone = $1;', [phone]);
+    if (userRes.rows.length === 0) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+    res.json({ success: true, data: formatUser(userRes.rows[0]), message: 'Success', cached: false });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// POST /api/users/profile — create or update user (upsert by phone)
 exports.syncProfile = async (req, res, next) => {
   try {
     const { phone, name, email } = req.body;
@@ -10,46 +42,27 @@ exports.syncProfile = async (req, res, next) => {
     }
 
     const now = Date.now();
-    let userRes = await pool.query('SELECT * FROM users WHERE phone = $1;', [phone]);
-    let user;
+    const userId = crypto.randomUUID();
 
-    if (userRes.rows.length > 0) {
-      user = userRes.rows[0];
-      const updateRes = await pool.query(
-        `UPDATE users SET 
-           last_login_at = $1,
-           name = COALESCE(NULLIF($2, ''), name),
-           email = COALESCE(NULLIF($3, ''), email)
-         WHERE phone = $4 RETURNING *;`,
-        [now, name, email, phone]
-      );
-      user = updateRes.rows[0];
-    } else {
-      const userId = crypto.randomUUID();
-      const insertRes = await pool.query(
-        `INSERT INTO users (id, phone, name, email, wallet_balance, created_at, last_login_at)
-         VALUES ($1, $2, $3, $4, 100.0, $5, $5) RETURNING *;`,
-        [userId, phone, name, email, now]
-      );
-      user = insertRes.rows[0];
-    }
+    // Upsert: insert new user OR update last_login + name/email if phone already exists
+    const upsertRes = await pool.query(
+      `INSERT INTO users (id, phone, name, email, wallet_balance, is_verified, created_at, last_login_at)
+       VALUES ($1, $2, $3, $4, 100.0, TRUE, $5, $5)
+       ON CONFLICT (phone) DO UPDATE SET
+         last_login_at = EXCLUDED.last_login_at,
+         name = CASE WHEN EXCLUDED.name <> '' THEN EXCLUDED.name ELSE users.name END,
+         email = CASE WHEN EXCLUDED.email <> '' THEN EXCLUDED.email ELSE users.email END,
+         is_verified = TRUE
+       RETURNING *;`,
+      [userId, phone, name || '', email || '', now]
+    );
+
+    const user = upsertRes.rows[0];
+    console.log(`[User] Profile synced: phone=${phone}, name=${user.name}, walletBalance=${user.wallet_balance}`);
 
     res.json({
       success: true,
-      data: {
-        id: 1, // Room local auto-gen matches integer
-        phone: user.phone,
-        name: user.name,
-        email: user.email,
-        avatarUrl: user.avatar_url || '',
-        sessionToken: user.session_token || '',
-        isVerified: user.is_verified || false,
-        defaultAddressId: user.default_address_id || -1,
-        isGoldMember: user.is_gold_member || false,
-        walletBalance: parseFloat(user.wallet_balance),
-        createdAt: parseInt(user.created_at),
-        lastLoginAt: parseInt(user.last_login_at)
-      },
+      data: formatUser(user),
       message: 'Profile synced successfully',
       cached: false
     });
@@ -58,25 +71,22 @@ exports.syncProfile = async (req, res, next) => {
   }
 };
 
-// Update legacy location format (optional but kept for backwards compatibility)
+// PUT /api/users/location — update legacy location format
 exports.updateLocation = async (req, res, next) => {
   try {
     const { userId, lat, lng, address } = req.body;
     if (!userId) {
-      return res.status(400).json({ success: false, message: 'User ID is required' });
+      return res.status(400).json({ success: false, message: 'User ID (phone) is required' });
     }
     const updatedAt = Date.now();
     await pool.query(
-      `INSERT INTO users (id, phone, address, latitude, longitude, updated_at, created_at, last_login_at)
-       VALUES ($1, $1, $2, $3, $4, $5, $5, $5)
-       ON CONFLICT (id) 
-       DO UPDATE SET 
-         address = EXCLUDED.address,
-         latitude = EXCLUDED.latitude,
-         longitude = EXCLUDED.longitude,
-         updated_at = EXCLUDED.updated_at
-       RETURNING *;`,
-      [userId, address || '', lat || 0.0, lng || 0.0, updatedAt]
+      `UPDATE users SET
+         address = $1,
+         latitude = $2,
+         longitude = $3,
+         updated_at = $4
+       WHERE phone = $5;`,
+      [address || '', lat || 0.0, lng || 0.0, updatedAt, userId]
     );
     res.json({ success: true, data: null, message: 'Location updated successfully', cached: false });
   } catch (error) {
@@ -84,7 +94,7 @@ exports.updateLocation = async (req, res, next) => {
   }
 };
 
-// Wallet: Get balance and transactions
+// GET /api/users/:phone/wallet — get balance and transactions
 exports.getWalletTransactions = async (req, res, next) => {
   try {
     const { phone } = req.params;
@@ -92,17 +102,19 @@ exports.getWalletTransactions = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'Phone is required' });
     }
 
-    const userRes = await pool.query('SELECT wallet_balance FROM users WHERE phone = $1;', [phone]);
+    // Ensure user exists (auto-create if not)
+    let userRes = await pool.query('SELECT wallet_balance FROM users WHERE phone = $1;', [phone]);
     if (userRes.rows.length === 0) {
-      // If user does not exist on remote db yet, create it on-demand
       const userId = crypto.randomUUID();
       const now = Date.now();
       const insertRes = await pool.query(
-        `INSERT INTO users (id, phone, name, wallet_balance, created_at, last_login_at)
-         VALUES ($1, $2, $2, 100.0, $3, $3) RETURNING *;`,
+        `INSERT INTO users (id, phone, name, wallet_balance, is_verified, created_at, last_login_at)
+         VALUES ($1, $2, $2, 100.0, TRUE, $3, $3)
+         ON CONFLICT (phone) DO UPDATE SET last_login_at = EXCLUDED.last_login_at
+         RETURNING *;`,
         [userId, phone, now]
       );
-      userRes.rows.push(insertRes.rows[0]);
+      userRes = { rows: insertRes.rows };
     }
 
     const txRes = await pool.query(
@@ -111,7 +123,7 @@ exports.getWalletTransactions = async (req, res, next) => {
     );
 
     const formattedTxs = txRes.rows.map(tx => ({
-      id: 0, // client auto-generates Room ID, we keep 0 for autogen compatibility
+      id: 0,
       type: tx.type,
       amount: parseFloat(tx.amount),
       description: tx.description,
@@ -133,7 +145,7 @@ exports.getWalletTransactions = async (req, res, next) => {
   }
 };
 
-// Wallet: Create new transaction (deposit, payment, etc.)
+// POST /api/users/:phone/wallet — create new transaction (deposit, payment, etc.)
 exports.addWalletTransaction = async (req, res, next) => {
   try {
     const { phone } = req.params;
@@ -146,7 +158,6 @@ exports.addWalletTransaction = async (req, res, next) => {
     const txId = crypto.randomUUID();
     const timestamp = Date.now();
 
-    // Start a transaction block
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -167,15 +178,14 @@ exports.addWalletTransaction = async (req, res, next) => {
       await client.query('UPDATE users SET wallet_balance = $1 WHERE phone = $2;', [balance, phone]);
 
       // Insert transaction record
-      const insertTxQuery = `
-        INSERT INTO wallet_transactions (id, user_id, type, amount, description, timestamp, member_name)
-        VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *;
-      `;
-      const txResult = await client.query(insertTxQuery, [
-        txId, phone, type, amount, description || '', timestamp, memberName || ''
-      ]);
+      const txResult = await client.query(
+        `INSERT INTO wallet_transactions (id, user_id, type, amount, description, timestamp, member_name)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *;`,
+        [txId, phone, type, amount, description || '', timestamp, memberName || '']
+      );
 
       await client.query('COMMIT');
+      console.log(`[Wallet] Transaction: phone=${phone}, type=${type}, amount=${amount}, newBalance=${balance}`);
 
       res.json({
         success: true,
@@ -204,7 +214,7 @@ exports.addWalletTransaction = async (req, res, next) => {
   }
 };
 
-// Saved Addresses: Get all addresses
+// GET /api/users/:phone/addresses — get all saved addresses
 exports.getAddresses = async (req, res, next) => {
   try {
     const { phone } = req.params;
@@ -218,7 +228,7 @@ exports.getAddresses = async (req, res, next) => {
     );
 
     const formattedList = addrRes.rows.map(addr => ({
-      id: 0, // client auto-generates Room ID, we keep 0 for autogen compatibility
+      id: 0,
       userId: 1,
       label: addr.label,
       fullAddress: addr.full_address,
@@ -234,7 +244,7 @@ exports.getAddresses = async (req, res, next) => {
   }
 };
 
-// Saved Addresses: Add new address
+// POST /api/users/:phone/addresses — add new address
 exports.addAddress = async (req, res, next) => {
   try {
     const { phone } = req.params;
@@ -252,22 +262,20 @@ exports.addAddress = async (req, res, next) => {
       await client.query('BEGIN');
 
       if (isDefault) {
-        // Clear previous defaults
         await client.query('UPDATE saved_addresses SET is_default = FALSE WHERE user_id = $1;', [phone]);
       }
 
-      const queryText = `
-        INSERT INTO saved_addresses (id, user_id, label, full_address, latitude, longitude, is_default, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *;
-      `;
-
-      const result = await client.query(queryText, [
-        addrId, phone, label, fullAddress, latitude, longitude, isDefault || false, createdAt
-      ]);
+      const result = await client.query(
+        `INSERT INTO saved_addresses (id, user_id, label, full_address, latitude, longitude, is_default, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *;`,
+        [addrId, phone, label, fullAddress, latitude, longitude, isDefault || false, createdAt]
+      );
 
       await client.query('COMMIT');
 
       const addr = result.rows[0];
+      console.log(`[Address] Saved for phone=${phone}: label=${label}, address=${fullAddress}`);
+
       res.json({
         success: true,
         data: {
@@ -294,7 +302,7 @@ exports.addAddress = async (req, res, next) => {
   }
 };
 
-// Saved Addresses: Delete address
+// DELETE /api/users/:phone/addresses/:id — delete address
 exports.deleteAddress = async (req, res, next) => {
   try {
     const { phone, id } = req.params;
@@ -303,6 +311,7 @@ exports.deleteAddress = async (req, res, next) => {
     }
 
     await pool.query('DELETE FROM saved_addresses WHERE user_id = $1 AND id = $2;', [phone, id]);
+    console.log(`[Address] Deleted id=${id} for phone=${phone}`);
 
     res.json({ success: true, data: null, message: 'Address deleted successfully', cached: false });
   } catch (error) {
