@@ -1,0 +1,27 @@
+{
+  "name": "bitecraft-backend",
+  "version": "1.0.0",
+  "description": "Production-grade lightweight Node.js backend for BiteCraft Food Delivery",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node test.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "kafkajs": "^2.2.4",
+    "mongoose": "^8.7.0",
+    "morgan": "^1.10.0",
+    "pg": "^8.13.0",
+    "redis": "^4.7.0",
+    "stripe": "^16.12.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "author": "Antigravity",
+  "license": "MIT"
+}

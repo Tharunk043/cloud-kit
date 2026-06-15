@@ -16,3 +16,11 @@
 local.properties
 .env
 debug.keystore
+node_modules/
+.idea/
+.agents/
+backend/test-sni.js
+backend/test-supabase.js
+.npmrc
+backend/.npmrc
+

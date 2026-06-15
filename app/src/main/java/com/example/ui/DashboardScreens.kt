@@ -1,6 +1,7 @@
 package com.example.ui
 
 import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -9,6 +10,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -16,6 +20,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -42,9 +47,12 @@ import com.example.ui.theme.*
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
-import android.webkit.WebView
+import android.util.Log
+import android.location.Geocoder
 import kotlinx.coroutines.launch
-import android.webkit.WebViewClient
+import java.util.Locale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -54,9 +62,15 @@ import com.google.android.gms.location.Priority
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.ui.window.Dialog
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import kotlinx.coroutines.delay
+import java.text.SimpleDateFormat
+import java.util.Date
 
 // --- Unsplash Image Fetchers ---
 
@@ -109,6 +123,7 @@ sealed class Screen(val route: String) {
     object Wallet : Screen("wallet")
     object Support : Screen("support")
     object Settings : Screen("settings")
+    object Family : Screen("family")
 }
 
 @Composable
@@ -338,7 +353,9 @@ fun RoleSwitcherBar(
 fun CustomerSection(
     viewModel: PlatformViewModel,
     currentScreen: Screen,
-    onNavigate: (Screen) -> Unit
+    onNavigate: (Screen) -> Unit,
+    onOpenSettings: () -> Unit = {},
+    onOpenFamily: () -> Unit = {}
 ) {
     Scaffold(
         bottomBar = {
@@ -377,6 +394,19 @@ fun CustomerSection(
                         modifier = Modifier.testTag("nav_${screen.route}")
                     )
                 }
+                // Settings item
+                NavigationBarItem(
+                    selected = false,
+                    onClick = { onOpenSettings() },
+                    icon = { Icon(Icons.Outlined.Settings, contentDescription = "Settings") },
+                    label = { Text("Settings", fontSize = 11.sp, fontWeight = FontWeight.Bold) },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = MaterialTheme.colorScheme.primary,
+                        selectedTextColor = MaterialTheme.colorScheme.primary,
+                        indicatorColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f)
+                    ),
+                    modifier = Modifier.testTag("nav_settings")
+                )
             }
         }
     ) { padding ->
@@ -390,7 +420,7 @@ fun CustomerSection(
                 is Screen.Detail -> RestaurantDetailView(viewModel, onNavigate)
                 is Screen.Cart -> ClientCartView(viewModel, onNavigate)
                 is Screen.Tracking -> ActiveOrderTrackingView(viewModel, onNavigate)
-                is Screen.Wallet -> ClientWalletView(viewModel)
+                is Screen.Wallet -> ClientWalletView(viewModel, onOpenFamily = onOpenFamily)
                 is Screen.Support -> GeminiSupportView(viewModel)
                 else -> ExploreView(viewModel, onNavigate)
             }
@@ -407,7 +437,43 @@ fun ExploreView(
     val category by viewModel.activeCategory.collectAsState()
     val restaurantsList by viewModel.filteredRestaurants.collectAsState()
     val isGold by viewModel.isGoldMember.collectAsState()
-    
+    val userAddress by viewModel.userAddress.collectAsState()
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var isLocatingHome by remember { mutableStateOf(false) }
+    var showLocationPicker by remember { mutableStateOf(false) }
+
+    // Location picker sheet — real OSM map
+    if (showLocationPicker) {
+        val devLat = viewModel.deviceLatitude.collectAsState().value ?: 12.9716
+        val devLng = viewModel.deviceLongitude.collectAsState().value ?: 77.5946
+        OSMLocationPickerSheet(
+            initialLat = devLat,
+            initialLng = devLng,
+            onAddressSelected = { address, lat, lng ->
+                viewModel.userAddress.value = address
+                viewModel.updateDeviceLocation(lat, lng)
+                viewModel.saveDeliveryAddress("Home", address, lat, lng)
+                showLocationPicker = false
+                Toast.makeText(context, "📍 Delivery location saved!", Toast.LENGTH_SHORT).show()
+            },
+            onDismiss = { showLocationPicker = false }
+        )
+    }
+
+    // Permission launcher — opens location picker after permission granted
+    val homeLocationLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        val granted = permissions[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+                      permissions[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        if (granted) {
+            showLocationPicker = true
+        } else {
+            Toast.makeText(context, "Location permission required to use map picker.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     // AI Mood fields
     var moodInput by remember { mutableStateOf("") }
     val aiRecommend by viewModel.aiRecommendationResult.collectAsState()
@@ -422,42 +488,69 @@ fun ExploreView(
         // Upper section with Location search & Member banner
         item {
             Column(modifier = Modifier.padding(16.dp)) {
-                // Address locator in professional Swiggy header format
+                // Address locator - tappable for GPS location update
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Outlined.LocationOn,
-                        contentDescription = "Current Location",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(26.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = "Home Block 4",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Black,
-                                color = MaterialTheme.colorScheme.onBackground
+                    // Clickable location area (icon + address column) — opens real map picker
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(10.dp))
+                            .clickable {
+                                homeLocationLauncher.launch(
+                                    arrayOf(
+                                        Manifest.permission.ACCESS_FINE_LOCATION,
+                                        Manifest.permission.ACCESS_COARSE_LOCATION
+                                    )
+                                )
+                            }
+                            .padding(vertical = 4.dp, horizontal = 2.dp)
+                    ) {
+                        if (isLocatingHome) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(20.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.primary
                             )
+                        } else {
                             Icon(
-                                imageVector = Icons.Default.ArrowDropDown,
-                                contentDescription = "Dropdown Caret",
+                                imageVector = Icons.Outlined.LocationOn,
+                                contentDescription = "Tap to update location",
                                 tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(24.dp)
+                                modifier = Modifier.size(26.dp)
                             )
                         }
-                        Text(
-                            text = viewModel.userAddress.collectAsState().value,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = if (isLocatingHome) "Detecting location..." else "Delivery to",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                if (!isLocatingHome) {
+                                    Icon(
+                                        imageVector = Icons.Default.ArrowDropDown,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                            Text(
+                                text = userAddress,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onBackground,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
-                    
+
                     // Dark theme toggle
                     val isDark by viewModel.isDarkTheme.collectAsState()
                     IconButton(
@@ -487,7 +580,7 @@ fun ExploreView(
                             Text("👑", fontSize = 18.sp)
                         } else {
                             Text(
-                                text = "TV", // Tharun Velamakuru
+                                text = "TV",
                                 fontWeight = FontWeight.Black,
                                 color = MaterialTheme.colorScheme.primary,
                                 fontSize = 12.sp
@@ -996,6 +1089,29 @@ fun ExploreView(
             )
         }
 
+        // Search result count badge when search is active
+        if (search.isNotEmpty()) {
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = if (restaurantsList.isEmpty()) "No results for \"${search}\"" else "Showing ${restaurantsList.size} restaurant${if (restaurantsList.size != 1) "s" else ""} for \"${search}\"",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    TextButton(onClick = { viewModel.searchQuery.value = "" }) {
+                        Text("Clear", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+
         if (restaurantsList.isEmpty()) {
             item {
                 Box(
@@ -1005,9 +1121,35 @@ fun ExploreView(
                     contentAlignment = Alignment.Center
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Outlined.Storefront, contentDescription = "Empty", modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Icon(
+                            if (search.isNotEmpty()) Icons.Default.SearchOff else Icons.Outlined.Storefront,
+                            contentDescription = "Empty",
+                            modifier = Modifier.size(64.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                         Spacer(modifier = Modifier.height(12.dp))
-                        Text("No matching kitchens found. Modify filters!", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (search.isNotEmpty()) {
+                            Text(
+                                text = "No results for \"${search}\"",
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = "Try different keywords or clear the search.",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(14.dp))
+                            OutlinedButton(onClick = { viewModel.searchQuery.value = "" }) {
+                                Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("Clear Search")
+                            }
+                        } else {
+                            Text("No matching kitchens found. Modify filters!", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                 }
             }
@@ -1209,25 +1351,26 @@ fun RestaurantDetailView(
         Column(
             modifier = Modifier.fillMaxSize()
         ) {
-            // Back toolbar
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = { onNavigate(Screen.Home) }) {
-                    Icon(Icons.Default.ArrowBack, contentDescription = "Back")
-                }
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = restaurant.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+            // Back toolbar using proper TopAppBar
+            CenterAlignedTopAppBar(
+                title = {
+                    Text(
+                        text = restaurant.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = { onNavigate(Screen.Home) }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background
                 )
-            }
+            )
 
             // Expanded detail body
             LazyColumn(
@@ -1523,7 +1666,7 @@ fun RestaurantDetailView(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Icon(
-                            imageVector = Icons.Default.ArrowForward,
+                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
                             contentDescription = "View Cart",
                             tint = Color.White,
                             modifier = Modifier.size(16.dp)
@@ -1751,6 +1894,7 @@ fun ClientCartView(
 ) {
     val cart by viewModel.cartItems.collectAsState()
     val isGold by viewModel.isGoldMember.collectAsState()
+    val scope = rememberCoroutineScope()
 
     var checkoutAddress by remember { mutableStateOf("Suite 301, Sector 12, Innovation Block, Cloud City") }
     var selectedPaymentMethod by remember { mutableStateOf("UPI") } // UPI, Credit Card, Wallet, COD
@@ -1772,6 +1916,19 @@ fun ClientCartView(
     var upiPinInput by remember { mutableStateOf("") }
     var isPushNotificationVisible by remember { mutableStateOf(false) }
 
+    var showUpiSheet by remember { mutableStateOf(false) }
+    var showCardSheet by remember { mutableStateOf(false) }
+    var showCodSheet by remember { mutableStateOf(false) }
+    var showSuccessOverlay by remember { mutableStateOf(false) }
+    var successAmount by remember { mutableStateOf(0.0) }
+    var successOrderId by remember { mutableStateOf("") }
+
+    val devLat by viewModel.deviceLatitude.collectAsState()
+    val devLng by viewModel.deviceLongitude.collectAsState()
+    val subtotal = cart.sumOf { it.price * it.quantity }
+    val delivery = if (isGold && subtotal > 12.0) 0.0 else 2.50
+    val totalOrderAmt = subtotal + delivery - discountAmount(isGold, subtotal)
+
     val context = LocalContext.current
     var isLoadingLocation by remember { mutableStateOf(false) }
 
@@ -1785,10 +1942,30 @@ fun ClientCartView(
             fetchCurrentLocation(
                 context = context,
                 onSuccess = { lat, lng ->
-                    isLoadingLocation = false
                     viewModel.updateDeviceLocation(lat, lng)
-                    checkoutAddress = "Real-Time GPS Lat: ${String.format("%.5f", lat)}, Lng: ${String.format("%.5f", lng)}"
-                    Toast.makeText(context, "Location updated successfully!", Toast.LENGTH_SHORT).show()
+                    scope.launch(Dispatchers.IO) {
+                        var resolvedAddress = "Real-Time GPS Lat: ${String.format(java.util.Locale.US, "%.5f", lat)}, Lng: ${String.format(java.util.Locale.US, "%.5f", lng)}"
+                        try {
+                            if (Geocoder.isPresent()) {
+                                val geocoder = Geocoder(context, Locale.getDefault())
+                                val addresses = geocoder.getFromLocation(lat, lng, 1)
+                                if (!addresses.isNullOrEmpty()) {
+                                    val address = addresses[0]
+                                    val addressLine = address.getAddressLine(0)
+                                    if (!addressLine.isNullOrEmpty()) {
+                                        resolvedAddress = addressLine
+                                    }
+                                }
+                            }
+                        } catch (e: Exception) {
+                            Log.e("ClientCartView", "Geocoding failed", e)
+                        }
+                        withContext(Dispatchers.Main) {
+                            isLoadingLocation = false
+                            checkoutAddress = resolvedAddress
+                            Toast.makeText(context, "Location updated successfully!", Toast.LENGTH_SHORT).show()
+                        }
+                    }
                 },
                 onFailure = {
                     isLoadingLocation = false
@@ -1983,22 +2160,33 @@ fun ClientCartView(
 
                 // Checkout trigger button
                 item {
-                    val devLat by viewModel.deviceLatitude.collectAsState()
-                    val devLng by viewModel.deviceLongitude.collectAsState()
-                    val subtotal = cart.sumOf { it.price * it.quantity }
-                    val delivery = if (isGold && subtotal > 12.0) 0.0 else 2.50
-                    val totalOrderAmt = subtotal + delivery - discountAmount(isGold, subtotal)
-
                     Button(
                         onClick = {
                             if (selectedPaymentMethod == "Wallet" && walletBal < totalOrderAmt) {
                                 Toast.makeText(context, "Insufficient balance! Please load money in BiteCraft Wallet first.", Toast.LENGTH_LONG).show()
                             } else {
-                                sandboxPaymentState = "IDLE"
-                                sandboxOtpInput = ""
-                                upiPinInput = ""
-                                isPushNotificationVisible = false
-                                showPaymentSandbox = true
+                                when (selectedPaymentMethod) {
+                                    "UPI" -> showUpiSheet = true
+                                    "Credit Card" -> showCardSheet = true
+                                    "COD" -> showCodSheet = true
+                                    "Wallet" -> {
+                                        sandboxPaymentState = "PROCESSING"
+                                        showPaymentSandbox = true
+                                        scope.launch {
+                                            kotlinx.coroutines.delay(1500)
+                                            sandboxPaymentState = "SUCCESS"
+                                            kotlinx.coroutines.delay(1000)
+                                            viewModel.placeOrder(selectedPaymentMethod, checkoutAddress, devLat, devLng) { orderId ->
+                                                showPaymentSandbox = false
+                                                if (orderId > 0) {
+                                                    successAmount = totalOrderAmt
+                                                    successOrderId = orderId.toString()
+                                                    showSuccessOverlay = true
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFC8019)),
@@ -2038,11 +2226,7 @@ fun ClientCartView(
                         .verticalScroll(rememberScrollState()),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    val subtotal = cart.sumOf { it.price * it.quantity }
-                    val delivery = if (isGold && subtotal > 12.0) 0.0 else 2.50
-                    val totalOrderAmt = subtotal + delivery - discountAmount(isGold, subtotal)
-                    val devLat by viewModel.deviceLatitude.collectAsState()
-                    val devLng by viewModel.deviceLongitude.collectAsState()
+
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -2428,7 +2612,7 @@ fun ClientCartView(
                                         onClick = {
                                             try {
                                                 val upiUri = Uri.parse(
-                                                    "upi://pay?pa=bitecraft@okhdfc&pn=BiteCraft%20Foods&am=${String.format(java.util.Locale.US, "%.2f", totalOrderAmt)}&cu=INR&tn=BiteCraft%20Order"
+                                                    "upi://pay?pa=tharunvelamakuru143-3@okaxis&pn=Tharun%20Velamakuru&tn=BiteCraft%20Order&am=${String.format(java.util.Locale.US, "%.2f", totalOrderAmt)}&cu=INR"
                                                 )
                                                 val upiIntent = Intent(Intent.ACTION_VIEW, upiUri)
                                                 context.startActivity(upiIntent)
@@ -2564,130 +2748,74 @@ fun ClientCartView(
             }
         }
     }
+
+    if (showUpiSheet) {
+        UpiPaymentSheet(
+            amount = totalOrderAmt,
+            onSuccess = { txnId ->
+                showUpiSheet = false
+                viewModel.placeOrder("UPI", checkoutAddress, devLat, devLng) { orderId ->
+                    if (orderId > 0) {
+                        successAmount = totalOrderAmt
+                        successOrderId = orderId.toString()
+                        showSuccessOverlay = true
+                    }
+                }
+            },
+            onDismiss = { showUpiSheet = false }
+        )
+    }
+
+    if (showCardSheet) {
+        CardPaymentSheet(
+            amount = totalOrderAmt,
+            onSuccess = { txnId ->
+                showCardSheet = false
+                viewModel.placeOrder("Credit Card", checkoutAddress, devLat, devLng) { orderId ->
+                    if (orderId > 0) {
+                        successAmount = totalOrderAmt
+                        successOrderId = orderId.toString()
+                        showSuccessOverlay = true
+                    }
+                }
+            },
+            onDismiss = { showCardSheet = false }
+        )
+    }
+
+    if (showCodSheet) {
+        CodConfirmSheet(
+            amount = totalOrderAmt,
+            onConfirm = {
+                showCodSheet = false
+                viewModel.placeOrder("COD", checkoutAddress, devLat, devLng) { orderId ->
+                    if (orderId > 0) {
+                        successAmount = totalOrderAmt
+                        successOrderId = orderId.toString()
+                        showSuccessOverlay = true
+                    }
+                }
+            },
+            onDismiss = { showCodSheet = false }
+        )
+    }
+
+    if (showSuccessOverlay) {
+        PaymentSuccessOverlay(
+            amountPaid = successAmount,
+            orderId = successOrderId,
+            onDismiss = {
+                showSuccessOverlay = false
+                onNavigate(Screen.Tracking)
+            }
+        )
+    }
 }
 
 fun discountAmount(isGold: Boolean, subtotal: Double): Double {
     return if (isGold) subtotal.coerceAtMost(10.0) else 0.0
 }
 
-@Composable
-fun InteractiveLeafletMap(
-    customerLat: Double,
-    customerLng: Double,
-    restaurantLat: Double,
-    restaurantLng: Double,
-    driverLat: Double,
-    driverLng: Double,
-    isDarkTheme: Boolean,
-    modifier: Modifier = Modifier
-) {
-    // Format coordinates using Locale.US to prevent European/localized comma syntax errors in HTML/JS (such as 12,9 instead of 12.9)
-    val rLatStr = remember(restaurantLat) { String.format(java.util.Locale.US, "%.7f", restaurantLat) }
-    val rLngStr = remember(restaurantLng) { String.format(java.util.Locale.US, "%.7f", restaurantLng) }
-    val cLatStr = remember(customerLat) { String.format(java.util.Locale.US, "%.7f", customerLat) }
-    val cLngStr = remember(customerLng) { String.format(java.util.Locale.US, "%.7f", customerLng) }
-    val dLatStr = remember(driverLat) { String.format(java.util.Locale.US, "%.7f", driverLat) }
-    val dLngStr = remember(driverLng) { String.format(java.util.Locale.US, "%.7f", driverLng) }
-
-    val rawHtml = remember(rLatStr, rLngStr, cLatStr, cLngStr, isDarkTheme) {
-        """
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-            <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-            <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-            <style>
-                body, html, #map { margin: 0; padding: 0; height: 100%; width: 100%; background: ${if (isDarkTheme) "#121212" else "#f0f0f0"}; }
-                .pulse-marker {
-                    background: #1e88e5;
-                    border-radius: 50%;
-                    box-shadow: 0 0 0 0 rgba(30, 136, 229, 0.7);
-                    animation: pulse-animation 1.5s infinite;
-                }
-                @keyframes pulse-animation {
-                    0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(30, 136, 229, 0.7); }
-                    70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(30, 136, 229, 0); }
-                    100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(30, 136, 229, 0); }
-                }
-                .custom-div-icon {
-                    background: transparent;
-                    border: none;
-                }
-            </style>
-        </head>
-        <body>
-            <div id="map"></div>
-            <script>
-                var map = L.map('map', { zoomControl: false }).setView([$rLatStr, $rLngStr], 14);
-                var tileUrl = '${if (isDarkTheme) "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png" else "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"}';
-                L.tileLayer(tileUrl, {
-                    attribution: '&copy; OpenStreetMap'
-                }).addTo(map);
-
-                var restaurantIcon = L.divIcon({
-                    html: '<div style="font-size: 26px; filter: drop-shadow(0px 2px 4px rgba(0,0,0,0.3));">🏪</div>',
-                    iconSize: [30, 30],
-                    className: 'custom-div-icon'
-                });
-
-                var customerIcon = L.divIcon({
-                    html: '<div class="pulse-marker" style="width: 14px; height: 14px; border: 2px solid white; display: flex; align-items: center; justify-content: center; border-radius: 50%;"><div style="width: 6px; height: 6px; border-radius: 50%; background: #1e88e5;"></div></div>',
-                    iconSize: [20, 20],
-                    className: 'custom-div-icon'
-                });
-
-                var driverIcon = L.divIcon({
-                    html: '<div style="font-size: 32px; filter: drop-shadow(0px 3px 6px rgba(0,0,0,0.45));">🏍️</div>',
-                    iconSize: [38, 38],
-                    className: 'custom-div-icon'
-                });
-
-                var rMarker = L.marker([$rLatStr, $rLngStr], { icon: restaurantIcon }).addTo(map);
-                var cMarker = L.marker([$cLatStr, $cLngStr], { icon: customerIcon }).addTo(map);
-                var dMarker = L.marker([$rLatStr, $rLngStr], { icon: driverIcon }).addTo(map);
-
-                var routePoly = L.polyline([
-                    [$rLatStr, $rLngStr],
-                    [$rLatStr, $rLngStr],
-                    [$cLatStr, $cLngStr]
-                ], { color: '#FC8019', weight: 5, opacity: 0.9, dashArray: '6, 8' }).addTo(map);
-
-                var group = new L.featureGroup([rMarker, cMarker, dMarker]);
-                map.fitBounds(group.getBounds().pad(0.2));
-
-                function updateDriver(lat, lng) {
-                    dMarker.setLatLng([lat, lng]);
-                    routePoly.setLatLngs([
-                        [$rLatStr, $rLngStr],
-                        [lat, lng],
-                        [$cLatStr, $cLngStr]
-                    ]);
-                    var updatedGroup = new L.featureGroup([rMarker, cMarker, dMarker]);
-                    map.fitBounds(updatedGroup.getBounds().pad(0.15));
-                }
-            </script>
-        </body>
-        </html>
-        """.trimIndent()
-    }
-
-    AndroidView(
-        modifier = modifier,
-        factory = { ctx ->
-            WebView(ctx).apply {
-                webViewClient = WebViewClient()
-                settings.javaScriptEnabled = true
-                settings.domStorageEnabled = true
-                settings.allowContentAccess = true
-                loadDataWithBaseURL("https://unpkg.com", rawHtml, "text/html", "UTF-8", null)
-            }
-        },
-        update = { webView ->
-            webView.evaluateJavascript("if (typeof updateDriver === 'function') { updateDriver($dLatStr, $dLngStr); }") { }
-        }
-    )
-}
 
 // --- ORDER TRACKING SIMULATOR ---
 
@@ -2726,6 +2854,7 @@ fun ActiveOrderTrackingView(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
+            .statusBarsPadding()
             .padding(16.dp)
     ) {
         // Tracker Header
@@ -2818,7 +2947,7 @@ fun ActiveOrderTrackingView(
                 contentAlignment = Alignment.Center
             ) {
                 if (selectedMapTab == "gps") {
-                    InteractiveLeafletMap(
+                    OSMDeliveryMap(
                         customerLat = activeOrder.customerLat,
                         customerLng = activeOrder.customerLng,
                         restaurantLat = activeOrder.restaurantLat,
@@ -2829,76 +2958,17 @@ fun ActiveOrderTrackingView(
                         modifier = Modifier.fillMaxSize()
                     )
                 } else {
-                    // Drawing delivery path coordinate offsets inside canvas
-                    Canvas(modifier = Modifier.fillMaxSize()) {
-                        val width = size.width
-                        val height = size.height
-
-                        // Draw simple grid map roads
-                        val strokeGridColor = if (darkThemeFlow) Color.White.copy(alpha = 0.05f) else Color.Blue.copy(alpha = 0.05f)
-                        for (x in 20..(width.toInt()) step 100) {
-                            drawLine(strokeGridColor, Offset(x.toFloat(), 0f), Offset(x.toFloat(), height), strokeWidth = 2f)
-                        }
-                        for (y in 20..(height.toInt()) step 100) {
-                            drawLine(strokeGridColor, Offset(0f, y.toFloat()), Offset(width, y.toFloat()), strokeWidth = 2f)
-                        }
-
-                        // Restaurant coordinates
-                        val rX = width * 0.2f
-                        val rY = height * 0.2f
-                        // Customer coordinates
-                        val cX = width * 0.8f
-                        val cY = height * 0.8f
-
-                        // Draw route line
-                        drawLine(
-                            color = if (darkThemeFlow) Color.DarkGray else Color.LightGray,
-                            start = Offset(rX, rY),
-                            end = Offset(cX, cY),
-                            strokeWidth = 4f
-                        )
-
-                        // Driver position loaded from live DB Coordinate updates
-                        val baseRestLat = activeOrder.restaurantLat
-                        val baseRestLng = activeOrder.restaurantLng
-                        val baseCustLat = activeOrder.customerLat
-                        val baseCustLng = activeOrder.customerLng
-
-                        val latDelta = baseCustLat - baseRestLat
-                        val lngDelta = baseCustLng - baseRestLng
-
-                        val activeLatOffset = if (Math.abs(latDelta) > 0.00001) {
-                            (activeOrder.driverLat - baseRestLat) / latDelta
-                        } else 0.5
-
-                        val activeLngOffset = if (Math.abs(lngDelta) > 0.00001) {
-                            (activeOrder.driverLng - baseRestLng) / lngDelta
-                        } else 0.5
-
-                        val dX = (rX + (cX - rX) * activeLngOffset).toFloat().coerceIn(rX, cX)
-                        val dY = (rY + (cY - rY) * activeLatOffset).toFloat().coerceIn(rY, cY)
-
-                        // Draw Restaurant
-                        drawCircle(Color(0xFFFF9800), radius = 12f, center = Offset(rX, rY))
-                        // Draw Customer
-                        drawCircle(Color(0xFF1E88E5), radius = 12f, center = Offset(cX, cY))
-                        // Draw Rider
-                        drawCircle(Color(0xFF4CAF50), radius = 15f, center = Offset(dX, dY))
-                        drawCircle(Color.White, radius = 7f, center = Offset(dX, dY))
-                    }
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .align(Alignment.BottomCenter)
-                            .background(Color.Black.copy(alpha = 0.7f))
-                            .padding(8.dp),
-                        horizontalArrangement = Arrangement.SpaceAround
-                    ) {
-                        Text("🏪 RESTAURANT", color = Color(0xFFFF9800), fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                        Text("🏍️ RIDER (LIVE)", color = Color(0xFF4CAF50), fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                        Text("📍 YOU", color = Color(0xFF1E88E5), fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                    }
+                    // Both tabs now show the real OSM map
+                    OSMDeliveryMap(
+                        customerLat = activeOrder.customerLat,
+                        customerLng = activeOrder.customerLng,
+                        restaurantLat = activeOrder.restaurantLat,
+                        restaurantLng = activeOrder.restaurantLng,
+                        driverLat = activeOrder.driverLat,
+                        driverLng = activeOrder.driverLng,
+                        isDarkTheme = darkThemeFlow,
+                        modifier = Modifier.fillMaxSize()
+                    )
                 }
             }
         }
@@ -3020,53 +3090,124 @@ fun ActiveOrderTrackingView(
     }
 }
 
-// --- CLIENT WALLET VIEW ---
+// --- CLIENT WALLET VIEW (Enterprise Edition) ---
 
 @Composable
-fun ClientWalletView(viewModel: PlatformViewModel) {
+fun ClientWalletView(viewModel: PlatformViewModel, onOpenFamily: () -> Unit = {}) {
     val balance by viewModel.walletBalance.collectAsState()
     val transactions by viewModel.walletTx.collectAsState()
+    val familyMembers by viewModel.familyMembers.collectAsState()
+    val totalFamilySpend by viewModel.totalFamilySpend.collectAsState()
 
     var depositAmount by remember { mutableStateOf("10.00") }
+    var showUpiDeposit by remember { mutableStateOf(false) }
+
+    // Quick deposit presets
+    val quickAmounts = listOf(100.0, 200.0, 500.0, 1000.0)
 
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(16.dp)
+            .background(MaterialTheme.colorScheme.background),
+        contentPadding = PaddingValues(bottom = 24.dp)
     ) {
+        // ── Gradient hero wallet card ──────────────────────────────────────
         item {
-            Text("BiteCraft Wallet", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, color = MaterialTheme.colorScheme.primary)
-            Spacer(modifier = Modifier.height(12.dp))
-        }
-
-        // Card displaying balance
-        item {
-            Card(
-                shape = RoundedCornerShape(20.dp),
-                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primary
-                )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        Brush.linearGradient(
+                            colors = listOf(Color(0xFFFF6B35), Color(0xFF7C3AED))
+                        )
+                    )
+                    .padding(24.dp)
             ) {
-                Column(modifier = Modifier.padding(20.dp)) {
-                    Text("Available Wallet Balance", color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp)
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text("$${String.format("%.2f", balance)}", color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.ExtraBold)
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Text("Instant deposit, automated order debits, & review cashbacks.", color = Color.White.copy(alpha = 0.9f), fontSize = 11.sp)
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Filled.AccountBalanceWallet,
+                            contentDescription = null,
+                            tint = Color.White.copy(alpha = 0.8f),
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("BiteCraft Wallet", color = Color.White.copy(alpha = 0.85f), fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "₹${String.format("%.2f", balance)}",
+                        color = Color.White,
+                        fontSize = 42.sp,
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = (-1).sp
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text("Available balance", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+                    Spacer(modifier = Modifier.height(20.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        // Add Money button
+                        Button(
+                            onClick = { showUpiDeposit = true },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color.White.copy(alpha = 0.25f),
+                                contentColor = Color.White
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.testTag("add_funds_btn")
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Add Money", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                        // Family button
+                        OutlinedButton(
+                            onClick = onOpenFamily,
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.5f)),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.Group, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Family", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                    }
                 }
             }
         }
 
-        // Add funds input block
+        // ── Quick reload amounts ───────────────────────────────────────────
+        item {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp)
+            ) {
+                Text("Quick Add", fontWeight = FontWeight.ExtraBold, fontSize = 15.sp, modifier = Modifier.padding(bottom = 10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    quickAmounts.forEach { amt ->
+                        OutlinedButton(
+                            onClick = { viewModel.addFunds(amt) },
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                        ) {
+                            Text("₹${amt.toInt()}", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Custom amount reload ───────────────────────────────────────────
         item {
             Card(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                shape = RoundedCornerShape(16.dp),
+                elevation = CardDefaults.cardElevation(2.dp)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Reload Wallet Funds", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text("Custom Amount", fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     Spacer(modifier = Modifier.height(8.dp))
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -3075,10 +3216,11 @@ fun ClientWalletView(viewModel: PlatformViewModel) {
                         OutlinedTextField(
                             value = depositAmount,
                             onValueChange = { depositAmount = it },
-                            placeholder = { Text("e.g. 20.00") },
+                            placeholder = { Text("Enter amount") },
                             modifier = Modifier.weight(1f).testTag("wallet_deposit_input"),
                             shape = RoundedCornerShape(12.dp),
-                            singleLine = true
+                            singleLine = true,
+                            prefix = { Text("₹", fontWeight = FontWeight.Bold) }
                         )
                         Spacer(modifier = Modifier.width(10.dp))
                         Button(
@@ -3086,54 +3228,168 @@ fun ClientWalletView(viewModel: PlatformViewModel) {
                                 val amt = depositAmount.toDoubleOrNull() ?: 10.0
                                 viewModel.addFunds(amt)
                             },
-                            modifier = Modifier.testTag("add_funds_btn")
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                         ) {
-                            Text("Reload")
+                            Text("Reload", fontWeight = FontWeight.Bold)
                         }
                     }
                 }
             }
         }
 
-        // Transaction Title
+        // ── Family Spending Summary (if members exist) ─────────────────────
+        if (familyMembers.isNotEmpty()) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color(0xFF7C3AED).copy(alpha = 0.08f)
+                    ),
+                    shape = RoundedCornerShape(16.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF7C3AED).copy(alpha = 0.2f))
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Group, contentDescription = null, tint = Color(0xFF7C3AED), modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Family Spending", fontWeight = FontWeight.ExtraBold, fontSize = 14.sp, color = Color(0xFF7C3AED))
+                            }
+                            TextButton(onClick = onOpenFamily) {
+                                Text("Manage", color = Color(0xFF7C3AED), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(12.dp))
+                        familyMembers.take(3).forEach { member ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(30.dp)
+                                            .clip(CircleShape)
+                                            .background(Color(member.avatarColor)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = member.name.take(1).uppercase(),
+                                            color = Color.White,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.ExtraBold
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column {
+                                        Text(member.name, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                        val pct = if (member.spendingLimit > 0) (member.monthlySpent / member.spendingLimit * 100).toInt() else 0
+                                        Text("₹${member.monthlySpent.toInt()} / ₹${member.spendingLimit.toInt()}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                                // Progress
+                                Box(modifier = Modifier.width(80.dp)) {
+                                    LinearProgressIndicator(
+                                        progress = { (member.monthlySpent / member.spendingLimit.coerceAtLeast(1.0)).toFloat().coerceIn(0f, 1f) },
+                                        color = Color(member.avatarColor),
+                                        trackColor = Color(member.avatarColor).copy(alpha = 0.2f),
+                                        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(4.dp))
+                                    )
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        HorizontalDivider(color = Color(0xFF7C3AED).copy(alpha = 0.15f))
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Total Family Spent", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("₹${String.format("%.2f", totalFamilySpend)}", fontWeight = FontWeight.ExtraBold, color = Color(0xFF7C3AED))
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Transaction history title ──────────────────────────────────────
         item {
-            Text("Recent Transactions History", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Transactions", fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
+                if (transactions.isNotEmpty()) {
+                    Text("${transactions.size} records", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
         }
 
         if (transactions.isEmpty()) {
             item {
-                Text("No transactions logged yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("💳", fontSize = 40.sp)
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text("No transactions yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
             }
         } else {
             items(transactions) { tx ->
+                val isCredit = tx.type in listOf("Deposit", "Refund", "Cashback")
+                val txIcon = when (tx.type) {
+                    "Deposit" -> "💰"
+                    "Cashback" -> "🎁"
+                    "Refund" -> "↩️"
+                    "FamilyDebit" -> "👨‍👩‍👧"
+                    else -> "🛍️"
+                }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(vertical = 6.dp)
-                        .clip(RoundedCornerShape(12.dp))
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                        .clip(RoundedCornerShape(14.dp))
                         .background(MaterialTheme.colorScheme.surface)
-                        .padding(12.dp),
+                        .padding(14.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Column {
-                        val icon = if (tx.type == "Debit") Icons.Default.ArrowDownward else Icons.Default.ArrowUpward
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                icon,
-                                contentDescription = tx.type,
-                                tint = if (tx.type == "Debit") Color.Red else Color.Green,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(tx.description, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(
+                                    if (isCredit) Color(0xFFDCFCE7) else Color(0xFFFFEEEE)
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(txIcon, fontSize = 18.sp)
                         }
-                        Text(tx.type, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text(tx.description, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                text = if (tx.memberName.isNotEmpty()) "${tx.type} · ${tx.memberName}" else tx.type,
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                     Text(
-                        text = if (tx.type == "Debit") "-$${String.format("%.2f", tx.amount)}" else "+$${String.format("%.2f", tx.amount)}",
+                        text = if (isCredit) "+₹${String.format("%.2f", tx.amount)}" else "-₹${String.format("%.2f", tx.amount)}",
                         fontWeight = FontWeight.ExtraBold,
-                        color = if (tx.type == "Debit") Color.Red else Color.Green
+                        fontSize = 14.sp,
+                        color = if (isCredit) Color(0xFF16A34A) else Color(0xFFDC2626)
                     )
                 }
             }
@@ -3147,63 +3403,260 @@ fun ClientWalletView(viewModel: PlatformViewModel) {
 fun GeminiSupportView(viewModel: PlatformViewModel) {
     val messages by viewModel.chatMessages.collectAsState()
     val inputText by viewModel.supportInputText.collectAsState()
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+    var isSending by remember { mutableStateOf(false) }
+    val prevSize = remember { mutableIntStateOf(messages.size) }
+    val sdf = remember { SimpleDateFormat("hh:mm a", Locale.getDefault()) }
+
+    // Auto-scroll and isSending reset when new message arrives
+    LaunchedEffect(messages.size) {
+        if (messages.size > prevSize.intValue) {
+            isSending = false
+            prevSize.intValue = messages.size
+        }
+        if (messages.isNotEmpty()) {
+            listState.animateScrollToItem(messages.size - 1)
+        }
+    }
+
+    val quickChips = listOf("Track my order", "Request refund", "Change address", "Membership help")
 
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .padding(16.dp)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+        // Premium gradient header
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(Color(0xFFFF9800), Color(0xFFE64A19))
+                    )
+                )
+                .padding(horizontal = 20.dp, vertical = 16.dp)
         ) {
-            Column {
-                Text("BiteCraft AI Support", fontWeight = FontWeight.ExtraBold, fontSize = 18.sp, color = MaterialTheme.colorScheme.primary)
-                Text("Generative chatbot on calls & refunds", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            TextButton(onClick = { viewModel.clearSupportChat() }) {
-                Text("Clear Chat", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.2f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("🤖", fontSize = 22.sp)
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = "BiteCraft AI",
+                            fontWeight = FontWeight.ExtraBold,
+                            fontSize = 18.sp,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "Powered by Gemini",
+                            fontSize = 11.sp,
+                            color = Color.White.copy(alpha = 0.85f),
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+                TextButton(
+                    onClick = { viewModel.clearSupportChat() },
+                    colors = ButtonDefaults.textButtonColors(contentColor = Color.White)
+                ) {
+                    Icon(Icons.Default.DeleteSweep, contentDescription = "Clear", modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Clear", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
             }
         }
 
         // Message List
-        Box(modifier = Modifier.weight(1f).fillMaxWidth().padding(vertical = 12.dp)) {
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+        ) {
             if (messages.isEmpty()) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("Type any message to initiate help desk queries.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                // Empty state with quick action chips
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text("🤖", fontSize = 48.sp)
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "Hey! I'm your BiteCraft AI assistant.",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        text = "Ask me anything about your order, refunds, or membership.",
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        lineHeight = 18.sp
+                    )
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Text(
+                        text = "Quick Actions",
+                        fontWeight = FontWeight.SemiBold,
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    // 2x2 chip grid
+                    quickChips.chunked(2).forEach { row ->
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        ) {
+                            row.forEach { chip ->
+                                SuggestionChip(
+                                    onClick = {
+                                        if (!isSending) {
+                                            viewModel.supportInputText.value = chip
+                                            scope.launch {
+                                                isSending = true
+                                                prevSize.intValue = messages.size
+                                                viewModel.sendSupportChat()
+                                                delay(8000L)
+                                                isSending = false
+                                            }
+                                        }
+                                    },
+                                    label = {
+                                        Text(
+                                            chip,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    },
+                                    colors = SuggestionChipDefaults.suggestionChipColors(
+                                        containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+                                    ),
+                                    border = SuggestionChipDefaults.suggestionChipBorder(
+                                        enabled = true,
+                                        borderColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)
+                                    )
+                                )
+                            }
+                        }
+                    }
                 }
             } else {
-                LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
                     items(messages) { msg ->
                         val isUser = msg.sender == "User"
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .clip(
-                                        RoundedCornerShape(
-                                            topStart = 16.dp,
-                                            topEnd = 16.dp,
-                                            bottomStart = if (isUser) 16.dp else 0.dp,
-                                            bottomEnd = if (isUser) 0.dp else 16.dp
-                                        )
-                                    )
-                                    .background(
-                                        if (isUser) MaterialTheme.colorScheme.primary
-                                        else MaterialTheme.colorScheme.surfaceVariant
-                                    )
-                                    .padding(12.dp)
-                                    .widthIn(max = 240.dp)
+                        val timeStr = sdf.format(Date(msg.timestamp))
+
+                        if (isUser) {
+                            // User bubble: right-aligned
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalAlignment = Alignment.End
                             ) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(
+                                            RoundedCornerShape(
+                                                topStart = 18.dp,
+                                                topEnd = 18.dp,
+                                                bottomStart = 18.dp,
+                                                bottomEnd = 4.dp
+                                            )
+                                        )
+                                        .background(MaterialTheme.colorScheme.primary)
+                                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                                        .widthIn(max = 260.dp)
+                                ) {
+                                    Text(
+                                        text = msg.message,
+                                        color = Color.White,
+                                        fontSize = 13.sp,
+                                        lineHeight = 18.sp
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(2.dp))
                                 Text(
-                                    text = msg.message,
-                                    color = if (isUser) Color.White else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontSize = 13.sp,
-                                    lineHeight = 18.sp
+                                    text = timeStr,
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                )
+                            }
+                        } else {
+                            // AI bubble: left-aligned with robot avatar
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalAlignment = Alignment.Start
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.Bottom,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    // Robot avatar circle
+                                    Box(
+                                        modifier = Modifier
+                                            .size(30.dp)
+                                            .clip(CircleShape)
+                                            .background(
+                                                Brush.linearGradient(
+                                                    colors = listOf(Color(0xFFFF9800), Color(0xFFE64A19))
+                                                )
+                                            ),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text("🤖", fontSize = 14.sp)
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(
+                                                RoundedCornerShape(
+                                                    topStart = 18.dp,
+                                                    topEnd = 18.dp,
+                                                    bottomStart = 4.dp,
+                                                    bottomEnd = 18.dp
+                                                )
+                                            )
+                                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                                            .padding(horizontal = 14.dp, vertical = 10.dp)
+                                            .widthIn(max = 240.dp)
+                                    ) {
+                                        Text(
+                                            text = msg.message,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontSize = 13.sp,
+                                            lineHeight = 18.sp
+                                        )
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = timeStr,
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                    modifier = Modifier.padding(start = 38.dp)
                                 )
                             }
                         }
@@ -3212,28 +3665,105 @@ fun GeminiSupportView(viewModel: PlatformViewModel) {
             }
         }
 
-        // Input Fields
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            OutlinedTextField(
-                value = inputText,
-                onValueChange = { viewModel.supportInputText.value = it },
-                placeholder = { Text("e.g. Can I request a refund, change address?") },
-                modifier = Modifier.weight(1f).testTag("chat_input"),
-                shape = RoundedCornerShape(12.dp),
-                singleLine = true
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            IconButton(
-                onClick = { viewModel.sendSupportChat() },
+        // AI thinking indicator
+        AnimatedVisibility(visible = isSending) {
+            Row(
                 modifier = Modifier
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary)
-                    .testTag("send_chat_btn")
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Start
             ) {
-                Icon(Icons.Default.Send, contentDescription = "Send Message", tint = Color.White)
+                CircularProgressIndicator(
+                    modifier = Modifier.size(16.dp),
+                    strokeWidth = 2.dp,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "BiteCraft AI is thinking...",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
+
+        // Input area
+        Surface(
+            tonalElevation = 4.dp,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = inputText,
+                    onValueChange = { viewModel.supportInputText.value = it },
+                    placeholder = {
+                        Text(
+                            "Ask anything about your order...",
+                            fontSize = 13.sp
+                        )
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("chat_input"),
+                    shape = RoundedCornerShape(24.dp),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(
+                        onSend = {
+                            if (!isSending && inputText.isNotBlank()) {
+                                scope.launch {
+                                    isSending = true
+                                    prevSize.intValue = messages.size
+                                    viewModel.sendSupportChat()
+                                    delay(8000L)
+                                    isSending = false
+                                }
+                            }
+                        }
+                    ),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+                    )
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                IconButton(
+                    onClick = {
+                        if (!isSending && inputText.isNotBlank()) {
+                            scope.launch {
+                                isSending = true
+                                prevSize.intValue = messages.size
+                                viewModel.sendSupportChat()
+                                delay(8000L)
+                                isSending = false
+                            }
+                        }
+                    },
+                    enabled = !isSending && inputText.isNotBlank(),
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (!isSending && inputText.isNotBlank())
+                                MaterialTheme.colorScheme.primary
+                            else
+                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+                        )
+                        .testTag("send_chat_btn")
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Send,
+                        contentDescription = "Send Message",
+                        tint = if (!isSending && inputText.isNotBlank()) Color.White else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                    )
+                }
             }
         }
     }

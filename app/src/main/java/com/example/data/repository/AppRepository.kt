@@ -8,9 +8,14 @@ import com.example.data.local.AppDatabase
 import com.example.data.local.CartItemEntity
 import com.example.data.local.ChatMessageEntity
 import com.example.data.local.DishEntity
+import com.example.data.local.FamilyMemberEntity
+import com.example.data.local.FamilyTransactionEntity
 import com.example.data.local.OrderEntity
+import com.example.data.local.PaymentMethodEntity
 import com.example.data.local.PlatformDao
 import com.example.data.local.RestaurantEntity
+import com.example.data.local.SavedAddressEntity
+import com.example.data.local.UserEntity
 import com.example.data.local.WalletTransactionEntity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -22,12 +27,48 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
+enum class PaymentType {
+    WALLET, UPI, CARD, COD, FAMILY_WALLET, SPLIT_BILL
+}
+
+data class SplitBillEntry(
+    val memberId: Int,
+    val memberName: String,
+    val amount: Double
+)
+
 class AppRepository(private val context: Context) {
+    // Retrofit instance to connect to host machine (Node.js backend) from Android emulator
+    private val retrofit = retrofit2.Retrofit.Builder()
+        .baseUrl("http://10.0.2.2:8080/")
+        .addConverterFactory(retrofit2.converter.moshi.MoshiConverterFactory.create(
+            com.squareup.moshi.Moshi.Builder()
+                .add(com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory())
+                .build()
+        ))
+        .client(
+            okhttp3.OkHttpClient.Builder()
+                .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+                .addInterceptor { chain ->
+                    val credentials = okhttp3.Credentials.basic("tharun", "Tharunk043")
+                    val request = chain.request().newBuilder()
+                        .header("Authorization", credentials)
+                        .build()
+                    chain.proceed(request)
+                }
+                .build()
+        )
+        .build()
+
+    val apiService: com.example.data.api.MongoApiService = retrofit.create(com.example.data.api.MongoApiService::class.java)
+    private val mongoOrderIdMap = java.util.concurrent.ConcurrentHashMap<Int, String>()
+
     private val db: AppDatabase = Room.databaseBuilder(
         context.applicationContext,
         AppDatabase::class.java,
         "bitecraft_database.db"
-    ).fallbackToDestructiveMigration().build()
+    ).fallbackToDestructiveMigration(dropAllTables = true).build()
 
     val dao: PlatformDao = db.dao()
 
@@ -37,182 +78,223 @@ class AppRepository(private val context: Context) {
     val orders: Flow<List<OrderEntity>> = dao.getAllOrders()
     val walletTx: Flow<List<WalletTransactionEntity>> = dao.getWalletTransactions()
     val chatMessages: Flow<List<ChatMessageEntity>> = dao.getChatMessages()
+    val familyMembers: Flow<List<FamilyMemberEntity>> = dao.getFamilyMembers()
+    val familyTransactions: Flow<List<FamilyTransactionEntity>> = dao.getFamilyTransactions()
+    val paymentMethods: Flow<List<PaymentMethodEntity>> = dao.getPaymentMethods()
 
     private val repositoryScope = CoroutineScope(Dispatchers.IO)
 
     init {
-        // Automatically check and pre-seed on startup
         repositoryScope.launch {
             seedDatabase()
         }
     }
 
     private suspend fun seedDatabase() = withContext(Dispatchers.IO) {
-        // Seed Restaurants if empty
         val currentRestaurants = dao.getAllRestaurants().first()
         if (currentRestaurants.isEmpty()) {
             Log.d("AppRepository", "Database is empty. Pre-seeding delicious full-stack menus...")
-            
+
             val seedRest = listOf(
                 RestaurantEntity(
                     id = 1,
-                    name = "The Gourmet Lab",
-                    description = "Scientific flavor manipulation, smash burgers, premium fries & stellar artisan shakes.",
-                    cuisine = "Gourmet Burgers & Shakes",
+                    name = "Rayalaseema Ruchulu",
+                    description = "Authentic spicy Rayalaseema cuisine — ragi sangati, gongura mutton, chepa pulusu & traditional Andhra meals.",
+                    cuisine = "Andhra & Rayalaseema",
                     rating = 4.8f,
-                    deliveryTime = 18,
-                    deliveryFee = 2.49,
+                    deliveryTime = 20,
+                    deliveryFee = 25.0,
                     image = "burger_lab",
                     bannerImage = "burger_banner",
-                    address = "Sector 12, Innovation Block, Cloud City",
+                    address = "MG Road, Vijayawada, Andhra Pradesh 520010",
                     isVeg = false,
                     isPromoted = true,
                     distanceKm = 1.2f,
-                    latitude = 12.9715987,
-                    longitude = 77.5945627
+                    latitude = 16.5062,
+                    longitude = 80.6480
                 ),
                 RestaurantEntity(
                     id = 2,
-                    name = "Slice & Co.",
-                    description = "Hand-stretched sourdough pizzas, loaded calzones, and fresh pesto pasta Bowls.",
-                    cuisine = "Artisanal Pizza & Italian",
+                    name = "Biryani House Guntur",
+                    description = "Legendary Guntur spiced dum biryani, nalli shorba, mirchi bajji and classic Hyderabadi haleem.",
+                    cuisine = "Biryani & Mughlai",
                     rating = 4.7f,
-                    deliveryTime = 25,
-                    deliveryFee = 3.99,
+                    deliveryTime = 30,
+                    deliveryFee = 30.0,
                     image = "pizza_slice",
                     bannerImage = "pizza_banner",
-                    address = "High Street Boulevard, Lane 4, Cloud City",
+                    address = "Brodipet, Guntur, Andhra Pradesh 522002",
                     isVeg = false,
                     isPromoted = false,
                     distanceKm = 2.8f,
-                    latitude = 12.978589,
-                    longitude = 77.640822
+                    latitude = 16.3067,
+                    longitude = 80.4365
                 ),
                 RestaurantEntity(
                     id = 3,
-                    name = "Noodle Craft",
-                    description = "Traditional hand-pulled vegan ramen broth, sichuan dumplings, and wok-kissed delicacies.",
-                    cuisine = "Asian Fusion & Ramen",
+                    name = "Govinda's Pure Veg",
+                    description = "Pure vegetarian South Indian meals — pesarattu, punugulu, gongura pachadi, Andhra thali & filter coffee.",
+                    cuisine = "South Indian Vegetarian",
                     rating = 4.6f,
-                    deliveryTime = 22,
-                    deliveryFee = 1.99,
+                    deliveryTime = 18,
+                    deliveryFee = 20.0,
                     image = "ramen_bowl",
                     bannerImage = "ramen_banner",
-                    address = "Zen Gardens, Phase II, Cloud City",
+                    address = "Kondapalli Road, Krishna Dist., Andhra Pradesh",
                     isVeg = true,
                     isPromoted = true,
                     distanceKm = 3.5f,
-                    latitude = 12.914142,
-                    longitude = 77.610531
+                    latitude = 16.6156,
+                    longitude = 80.5499
                 ),
                 RestaurantEntity(
                     id = 4,
-                    name = "Sweet Treat Desserts",
-                    description = "Decadent NY cheesecakes, Belgian chocolate fondants, and scone assortments.",
-                    cuisine = "Desserts & Cakes",
+                    name = "Sweet Bhoomi Sweets",
+                    description = "Famous Andhra sweets — Tirupati laddu, Ariselu, Pootharekulu, Bobbatlu & fresh Kajjikayalu.",
+                    cuisine = "Indian Sweets & Snacks",
                     rating = 4.9f,
                     deliveryTime = 12,
-                    deliveryFee = 0.00, // Free Delivery
+                    deliveryFee = 0.0,
                     image = "cake_slice",
                     bannerImage = "dessert_banner",
-                    address = "The Pastry Hub, Galleria Mall, Cloud City",
+                    address = "Eluru Road, Vijayawada, Andhra Pradesh 520002",
                     isVeg = true,
                     isPromoted = false,
                     distanceKm = 0.8f,
-                    latitude = 12.956281,
-                    longitude = 77.585532
+                    latitude = 16.5193,
+                    longitude = 80.6305
+                ),
+                RestaurantEntity(
+                    id = 5,
+                    name = "Hyderabad Spice Garden",
+                    description = "Premium Hyderabadi cuisine — Kacchi dum biryani, double ka meetha, Irani chai & sheer khurma.",
+                    cuisine = "Hyderabadi",
+                    rating = 4.7f,
+                    deliveryTime = 25,
+                    deliveryFee = 35.0,
+                    image = "burger_lab",
+                    bannerImage = "ramen_banner",
+                    address = "Banjara Hills, Hyderabad, Telangana 500034",
+                    isVeg = false,
+                    isPromoted = true,
+                    distanceKm = 4.2f,
+                    latitude = 17.4126,
+                    longitude = 78.4071
                 )
             )
-            
+
+            // Try to sync restaurants list from Node.js MongoDB Atlas database
+            try {
+                val response = apiService.getRestaurants(page = 0, size = 50)
+                if (response.isSuccessful && response.body()?.success == true) {
+                    val mongoRestaurants = response.body()?.data ?: emptyList()
+                    if (mongoRestaurants.isNotEmpty()) {
+                        val entities = mongoRestaurants.map {
+                            RestaurantEntity(
+                                id = it.id.toIntOrNull() ?: 1,
+                                name = it.name,
+                                description = it.description,
+                                cuisine = it.cuisine,
+                                rating = it.rating,
+                                deliveryTime = it.deliveryTime,
+                                deliveryFee = it.deliveryFee,
+                                image = it.imageUrl,
+                                bannerImage = if (it.imageUrl == "burger_lab") "burger_banner" else if (it.imageUrl == "pizza_slice") "pizza_banner" else if (it.imageUrl == "ramen_bowl") "ramen_banner" else "dessert_banner",
+                                address = it.address,
+                                isVeg = it.isVeg,
+                                isPromoted = it.isPromoted,
+                                distanceKm = 1.2f,
+                                latitude = it.latitude,
+                                longitude = it.longitude
+                            )
+                        }
+                        dao.clearRestaurants()
+                        dao.insertRestaurants(entities)
+                        Log.d("AppRepository", "Successfully synced restaurants from MongoDB Atlas database!")
+                    } else {
+                        dao.insertRestaurants(seedRest)
+                    }
+                } else {
+                    dao.insertRestaurants(seedRest)
+                }
+            } catch (e: Exception) {
+                Log.e("AppRepository", "Failed to contact MongoDB backend, falling back to local pre-seeding: ${e.message}")
+                dao.insertRestaurants(seedRest)
+            }
+
+
             val seedDishes = listOf(
-                // The Gourmet Lab (Rest 1)
-                DishEntity(
-                    id = 101, restaurantId = 1, name = "Truffle Truce Burger", price = 12.99,
-                    description = "Rich earthy truffle aioli, dual certified angus smash patties, caramelized balsamic mushrooms, swiss glaze.",
-                    image = "truffle_burger", category = "Burgers", isVeg = false, isBestseller = true, spiceLevelSupport = false,
-                    addonsJson = "Extra Truffle Glaze,Extra Patty,Bacon Strips"
-                ),
-                DishEntity(
-                    id = 102, restaurantId = 1, name = "Spicy BBQ Heat Burger", price = 10.99,
-                    description = "Fiery house hickory BBQ spread, fresh sliced jalapenos, molten pepper jack cheese, toasted butter roll.",
-                    image = "bbq_burger", category = "Burgers", isVeg = false, isBestseller = false, spiceLevelSupport = true,
-                    addonsJson = "Extra Cheese,Diced Onion Crumbles"
-                ),
-                DishEntity(
-                    id = 103, restaurantId = 1, name = "Crinkly Parm Fries", price = 4.99,
-                    description = "Super crispy crinkle-cut fries dusted generously with aged Parmesan, rosemary flakes, and white truffle splash.",
-                    image = "parm_fries", category = "Starters", isVeg = true, isBestseller = true, spiceLevelSupport = false,
-                    addonsJson = "Extra Parm Powder,Cheese Sauce Dip"
-                ),
-                DishEntity(
-                    id = 104, restaurantId = 1, name = "Cosmic Caramel Shake", price = 5.49,
-                    description = "Slow-blended gourmet salted caramel, fresh vanilla bean ice cream, golden praline sprinkles.",
-                    image = "caramel_shake", category = "Desserts", isVeg = true, isBestseller = false, spiceLevelSupport = false,
-                    addonsJson = "Whipped Cream,Chocolate Drizzle"
-                ),
-
-                // Slice & Co. (Rest 2)
-                DishEntity(
-                    id = 201, restaurantId = 2, name = "Burrata Blush Pizza", price = 14.99,
-                    description = "Blush marinara reduction base, pull-fresh premium burrata, basil pesto oil injection, cracked pepper.",
-                    image = "burrata_pizza", category = "Pizzas", isVeg = true, isBestseller = true, spiceLevelSupport = false,
-                    addonsJson = "Extra Basil Oil,Extra Garlic Powder"
-                ),
-                DishEntity(
-                    id = 202, restaurantId = 2, name = "Fiery Diavola Pizza", price = 13.99,
-                    description = "Molten mozzarella, artisanal spicy pepperoni medallions, Calabrian hot spread, house fire infused oil.",
-                    image = "diavola_pizza", category = "Pizzas", isVeg = false, isBestseller = false, spiceLevelSupport = true,
-                    addonsJson = "Extra Pepperoni,Chili Flakes Sachet"
-                ),
-                DishEntity(
-                    id = 203, restaurantId = 2, name = "Creamy Mushroom Fettuccine", price = 12.49,
-                    description = "Handcrafted local ribbon pasta layered beautifully with a velvety reduction of sage, butter, mushroom fold, chives.",
-                    image = "mushroom_fettuccine", category = "Mains", isVeg = true, isBestseller = false, spiceLevelSupport = false,
-                    addonsJson = "Extra Butter Garlic Crust,More Mushrooms"
-                ),
-
-                // Noodle Craft (Rest 3)
-                DishEntity(
-                    id = 301, restaurantId = 3, name = "Volcano Ramen Bowl", price = 11.99,
-                    description = "24hr simmered fiery organic miso base, hand-pulled raw noodles, silken tofu, sheets of nori, spicy pepper dust.",
-                    image = "volcano_ramen", category = "Ramen", isVeg = true, isBestseller = true, spiceLevelSupport = true,
-                    addonsJson = "Extra Nori Sheets,Soft Egg (Non-Veg)"
-                ),
-                DishEntity(
-                    id = 302, restaurantId = 3, name = "Sichuan Chili Glass Noodles", price = 9.99,
-                    description = "Handmade sweet potato glass ribbons doused in highly addictive red hot chili oil crunch, green onions, sesame.",
-                    image = "glass_noodles", category = "Mains", isVeg = true, isBestseller = false, spiceLevelSupport = true,
-                    addonsJson = "Tofu Cubes,Sesame Sprinkles"
-                ),
-                DishEntity(
-                    id = 303, restaurantId = 3, name = "Veggie Gyoza Platter", price = 5.99,
-                    description = "Pan-seared crystal transparent dumplings packed with mixed local greens, glass noodle trim, ginger-soy.",
-                    image = "veggie_gyoza", category = "Starters", isVeg = true, isBestseller = true, spiceLevelSupport = false,
-                    addonsJson = "Chili Crisp Oil Cup,Soy dipping sauce"
-                ),
-
-                // Sweet Treat Desserts (Rest 4)
-                DishEntity(
-                    id = 401, restaurantId = 4, name = "Luxe Lava Chocolate Fondant", price = 7.99,
-                    description = "Baked-to-order Single-origin dark chocolate cake with a gushing molten core, paired with a scoop of premium vanilla bean.",
-                    image = "lava_fondant", category = "Cakes", isVeg = true, isBestseller = true, spiceLevelSupport = false,
-                    addonsJson = "Fudge Injection,Extra Ice Cream Scoop"
-                ),
-                DishEntity(
-                    id = 402, restaurantId = 4, name = "Salted Caramel Pecan Cheesecake", price = 6.49,
-                    description = "Silky smooth New York sour-cream style cheesecake base over a thick graham crust, loaded with glazed toasted pecans.",
-                    image = "pecan_cheesecake", category = "Cakes", isVeg = true, isBestseller = false, spiceLevelSupport = false,
-                    addonsJson = "Extra Salted Caramel Drizzle"
-                ),
-                DishEntity(
-                    id = 403, restaurantId = 4, name = "Matcha White Choc Scone", price = 3.99,
-                    description = "Delicately baked crumbly scone blended with real Japanese Kyoto matcha powder and creamy white chocolate chips.",
-                    image = "matcha_scone", category = "Starters", isVeg = true, isBestseller = false, spiceLevelSupport = false,
-                    addonsJson = "Clotted Cream Spoon"
-                )
+                // Restaurant 1 - Rayalaseema Ruchulu
+                DishEntity(id = 101, restaurantId = 1, name = "Gongura Mutton Curry", price = 220.0,
+                    description = "Slow-cooked tender mutton in tangy sorrel (gongura) gravy — the crown jewel of Rayalaseema cuisine.",
+                    image = "truffle_burger", category = "Main Course", isVeg = false, isBestseller = true, spiceLevelSupport = true,
+                    addonsJson = "Extra Gongura,Bone-In Pieces,Extra Gravy"),
+                DishEntity(id = 102, restaurantId = 1, name = "Ragi Sangati Meal", price = 150.0,
+                    description = "Traditional Rayalaseema finger millet balls served with spicy pappu charu, gongura pachadi & roasted papad.",
+                    image = "bbq_burger", category = "Thali & Meals", isVeg = true, isBestseller = false, spiceLevelSupport = false,
+                    addonsJson = "Extra Sangati Ball,Egg Curry Add-on"),
+                DishEntity(id = 103, restaurantId = 1, name = "Chepa Pulusu", price = 180.0,
+                    description = "Tangy tamarind fish curry with Rohu fish, Andhra spices — best paired with steamed rice.",
+                    image = "parm_fries", category = "Seafood", isVeg = false, isBestseller = true, spiceLevelSupport = true,
+                    addonsJson = "Extra Fish Pieces,Steamed Rice"),
+                DishEntity(id = 104, restaurantId = 1, name = "Andhra Chicken Fry", price = 280.0,
+                    description = "Dry-spiced whole chicken pieces tossed with fresh curry leaves, guntur mirchi & aromatic spice blend.",
+                    image = "caramel_shake", category = "Starters", isVeg = false, isBestseller = false, spiceLevelSupport = true,
+                    addonsJson = "Extra Masala,Mint Chutney"),
+                // Restaurant 2 - Biryani House Guntur
+                DishEntity(id = 201, restaurantId = 2, name = "Guntur Chicken Biryani", price = 199.0,
+                    description = "Aromatic basmati rice layered with spicy Guntur-style chicken, saffron, crispy onions & Andhra spice masala.",
+                    image = "burrata_pizza", category = "Biryani", isVeg = false, isBestseller = true, spiceLevelSupport = true,
+                    addonsJson = "Extra Raita,Extra Chicken Piece,Mirchi Salan"),
+                DishEntity(id = 202, restaurantId = 2, name = "Mutton Dum Biryani", price = 280.0,
+                    description = "Slow-cooked dum biryani with tender mutton, rose water, fried onion & kewra essence.",
+                    image = "diavola_pizza", category = "Biryani", isVeg = false, isBestseller = false, spiceLevelSupport = true,
+                    addonsJson = "Extra Mutton,Brinjal Salan,Boiled Egg"),
+                DishEntity(id = 203, restaurantId = 2, name = "Hyderabadi Haleem", price = 150.0,
+                    description = "Slow-cooked wheat & mutton haleem with caramelized onions, lime, ginger julienne & fried onions.",
+                    image = "mushroom_fettuccine", category = "Starters", isVeg = false, isBestseller = true, spiceLevelSupport = false,
+                    addonsJson = "Extra Lime,Ghee Drizzle"),
+                // Restaurant 3 - Govinda's Pure Veg
+                DishEntity(id = 301, restaurantId = 3, name = "Pesarattu Combo", price = 80.0,
+                    description = "Crispy green moong dal dosas served with ginger chutney, allam pachadi & upma stuffing.",
+                    image = "volcano_ramen", category = "Breakfast", isVeg = true, isBestseller = true, spiceLevelSupport = false,
+                    addonsJson = "Upma Stuffing,Extra Chutney,Filter Coffee"),
+                DishEntity(id = 302, restaurantId = 3, name = "Andhra Meals Thali", price = 120.0,
+                    description = "Full Andhra thali: rice, sambar, rasam, dal, vegetable curry, pickle, papad & curd.",
+                    image = "glass_noodles", category = "Thali & Meals", isVeg = true, isBestseller = true, spiceLevelSupport = false,
+                    addonsJson = "Extra Rice,Ghee,Dessert Add-on"),
+                DishEntity(id = 303, restaurantId = 3, name = "Gongura Paneer", price = 160.0,
+                    description = "Fresh paneer cubes cooked in a spicy tangy gongura sauce with Andhra tempering.",
+                    image = "veggie_gyoza", category = "Main Course", isVeg = true, isBestseller = false, spiceLevelSupport = true,
+                    addonsJson = "Extra Paneer,Butter Naan"),
+                // Restaurant 4 - Sweet Bhoomi Sweets
+                DishEntity(id = 401, restaurantId = 4, name = "Pootharekulu (4 pcs)", price = 80.0,
+                    description = "Andhra's iconic paper-thin rice starch sweet filled with jaggery, cardamom & nuts. Melts in your mouth.",
+                    image = "lava_fondant", category = "Traditional Sweets", isVeg = true, isBestseller = true, spiceLevelSupport = false,
+                    addonsJson = "Dry Fruit Filling,Chocolate Filling"),
+                DishEntity(id = 402, restaurantId = 4, name = "Tirupati Laddu (2 pcs)", price = 60.0,
+                    description = "Authentic Tirupati style besan laddus made with pure ghee, sugar & cardamom.",
+                    image = "pecan_cheesecake", category = "Traditional Sweets", isVeg = true, isBestseller = true, spiceLevelSupport = false,
+                    addonsJson = "Extra Laddu"),
+                DishEntity(id = 403, restaurantId = 4, name = "Ariselu (6 pcs)", price = 70.0,
+                    description = "Crispy deep-fried rice & jaggery sweet discs — traditional Sankranti Andhra delicacy.",
+                    image = "matcha_scone", category = "Traditional Sweets", isVeg = true, isBestseller = false, spiceLevelSupport = false,
+                    addonsJson = "Sesame Coating"),
+                // Restaurant 5 - Hyderabad Spice Garden
+                DishEntity(id = 501, restaurantId = 5, name = "Kacchi Dum Biryani", price = 320.0,
+                    description = "Royal Hyderabadi biryani with marinated raw chicken slow-cooked under sealed dough in aromatic basmati.",
+                    image = "truffle_burger", category = "Biryani", isVeg = false, isBestseller = true, spiceLevelSupport = false,
+                    addonsJson = "Mirchi Salan,Extra Raita,Boiled Egg"),
+                DishEntity(id = 502, restaurantId = 5, name = "Irani Chai + Osmania Biscuits", price = 60.0,
+                    description = "Classic Hyderabadi Irani chai with strong tea & milk, served with crunchy Osmania biscuits.",
+                    image = "caramel_shake", category = "Beverages", isVeg = true, isBestseller = true, spiceLevelSupport = false,
+                    addonsJson = "Extra Biscuits,Sugar-Free Option"),
+                DishEntity(id = 503, restaurantId = 5, name = "Double Ka Meetha", price = 90.0,
+                    description = "Hyderabadi bread pudding with fried bread slices, condensed milk, saffron, dry fruits & rose water.",
+                    image = "lava_fondant", category = "Desserts", isVeg = true, isBestseller = false, spiceLevelSupport = false,
+                    addonsJson = "Ice Cream Scoop,Extra Dry Fruits")
             )
 
-            // Wallet seed transaction
             val seedTx = WalletTransactionEntity(
                 type = "Deposit",
                 amount = 50.00,
@@ -220,10 +302,26 @@ class AppRepository(private val context: Context) {
                 timestamp = System.currentTimeMillis()
             )
 
+            // Seed family members
+            val seedFamilyMembers = listOf(
+                FamilyMemberEntity(name = "Tharun V", email = "tharun@bitecraft.in", avatarColor = 0xFFFC8019, spendingLimit = 200.0, monthlySpent = 45.50, isAdmin = true),
+                FamilyMemberEntity(name = "Priya V", email = "priya@bitecraft.in", avatarColor = 0xFF7C3AED, spendingLimit = 150.0, monthlySpent = 32.00, isAdmin = false),
+                FamilyMemberEntity(name = "Ravi V", email = "ravi@bitecraft.in", avatarColor = 0xFF059669, spendingLimit = 100.0, monthlySpent = 18.75, isAdmin = false)
+            )
+
+            // Seed payment methods
+            val seedPaymentMethods = listOf(
+                PaymentMethodEntity(type = "UPI", label = "tharun@paytm", maskedValue = "tharun@paytm", isDefault = true),
+                PaymentMethodEntity(type = "UPI", label = "tharun@gpay", maskedValue = "tharun@gpay", isDefault = false),
+                PaymentMethodEntity(type = "CARD", label = "Visa ****4242", maskedValue = "****4242", isDefault = false)
+            )
+
             dao.insertRestaurants(seedRest)
             dao.insertDishes(seedDishes)
             dao.insertWalletTransaction(seedTx)
-            Log.d("AppRepository", "Seed complete! Inserted ${seedRest.size} restaurants and ${seedDishes.size} dishes.")
+            seedFamilyMembers.forEach { dao.insertFamilyMember(it) }
+            seedPaymentMethods.forEach { dao.insertPaymentMethod(it) }
+            Log.d("AppRepository", "Seed complete! Inserted ${seedRest.size} restaurants, ${seedDishes.size} dishes, ${seedFamilyMembers.size} family members.")
         }
     }
 
@@ -280,14 +378,15 @@ class AppRepository(private val context: Context) {
         address: String,
         promoCode: String = "",
         userLat: Double? = null,
-        userLng: Double? = null
+        userLng: Double? = null,
+        splitEntries: List<SplitBillEntry> = emptyList()
     ): Int = withContext(Dispatchers.IO) {
         val items = dao.getCartItems().first()
         if (items.isEmpty()) return@withContext -1
 
         val restId = items.first().restaurantId
         val restName = items.first().restaurantName
-        
+
         var subtotal = 0.0
         val summaryBuilder = StringBuilder()
         val detailArray = JSONArray()
@@ -310,26 +409,56 @@ class AppRepository(private val context: Context) {
         val deliveryFee = restaurant?.deliveryFee ?: 2.0
         var discount = 0.0
         if (promoCode == "GOLD100") {
-            discount = subtotal.coerceAtMost(10.0) // Cap promo discount at $10.00
+            discount = subtotal.coerceAtMost(10.0)
         }
 
         val totalAmount = subtotal + deliveryFee - discount
 
-        // Deduct from wallet if wallet selected
-        if (paymentMethod == "Wallet") {
-            val balance = getWalletBalance()
-            if (balance < totalAmount) {
-                return@withContext -2 // Insufficient funds symbol
-            }
-            // Add negative tx
-            dao.insertWalletTransaction(
-                WalletTransactionEntity(
-                    type = "Debit",
-                    amount = totalAmount,
-                    description = "Paid for Order at $restName",
-                    timestamp = System.currentTimeMillis()
+        // Handle payment type
+        when (paymentMethod) {
+            "Wallet" -> {
+                val balance = getWalletBalance()
+                if (balance < totalAmount) return@withContext -2
+                dao.insertWalletTransaction(
+                    WalletTransactionEntity(
+                        type = "Debit",
+                        amount = totalAmount,
+                        description = "Paid for Order at $restName",
+                        timestamp = System.currentTimeMillis()
+                    )
                 )
-            )
+            }
+            "Family Wallet" -> {
+                // Deduct from family admin's wallet
+                val balance = getWalletBalance()
+                if (balance < totalAmount) return@withContext -2
+                dao.insertWalletTransaction(
+                    WalletTransactionEntity(
+                        type = "Debit",
+                        amount = totalAmount,
+                        description = "Family Wallet payment at $restName",
+                        timestamp = System.currentTimeMillis(),
+                        memberName = "Family Account"
+                    )
+                )
+            }
+            "Split Bill" -> {
+                // Handle split bill between family members
+                if (splitEntries.isNotEmpty()) {
+                    splitEntries.forEach { entry ->
+                        dao.insertFamilyTransaction(
+                            FamilyTransactionEntity(
+                                memberId = entry.memberId,
+                                memberName = entry.memberName,
+                                orderId = 0, // will update after order creation
+                                amount = entry.amount,
+                                description = "Split bill at $restName"
+                            )
+                        )
+                        dao.incrementMemberSpending(entry.memberId, entry.amount)
+                    }
+                }
+            }
         }
 
         val resolvedCustomerLat = userLat ?: 12.935123
@@ -338,27 +467,76 @@ class AppRepository(private val context: Context) {
         val rawRestaurantLat = restaurant?.latitude ?: 12.9715987
         val rawRestaurantLng = restaurant?.longitude ?: 77.5945627
 
-        // If the user's real GPS is far from seed coordinates, spawn restaurant locally (approx 1 km away)
         val isFar = if (userLat != null && userLng != null) {
             val distLat = Math.abs(rawRestaurantLat - userLat)
             val distLng = Math.abs(rawRestaurantLng - userLng)
             distLat > 0.5 || distLng > 0.5
-        } else {
-            false
+        } else false
+
+        val resolvedRestaurantLat = if (isFar && userLat != null) userLat + 0.0068 else rawRestaurantLat
+        val resolvedRestaurantLng = if (isFar && userLng != null) userLng - 0.0072 else rawRestaurantLng
+
+        var localOrderId = 0
+
+        try {
+            val itemsList = items.map {
+                com.example.data.api.MongoOrderItem(
+                    dishId = "${it.dishId}",
+                    name = it.name,
+                    quantity = it.quantity,
+                    price = it.price
+                )
+            }
+            val placeRequest = com.example.data.api.PlaceOrderRequest(
+                restaurantId = "$restId",
+                items = itemsList,
+                totalAmount = totalAmount,
+                deliveryAddress = address,
+                paymentMethod = paymentMethod,
+                customerLat = resolvedCustomerLat,
+                customerLng = resolvedCustomerLng,
+                restaurantLat = resolvedRestaurantLat,
+                restaurantLng = resolvedRestaurantLng
+            )
+            
+            val response = apiService.placeOrder(placeRequest)
+            if (response.isSuccessful && response.body()?.success == true) {
+                val mongoOrder = response.body()?.data
+                if (mongoOrder != null) {
+                    val newOrder = OrderEntity(
+                        restaurantId = restId,
+                        restaurantName = restName,
+                        status = mongoOrder.status,
+                        totalAmount = totalAmount,
+                        itemsSummary = summaryBuilder.toString(),
+                        itemsDetailJson = detailArray.toString(),
+                        paymentMethod = paymentMethod,
+                        deliveryAddress = address,
+                        timestamp = mongoOrder.createdAt,
+                        driverName = "Dash Rider",
+                        driverPhone = "+1 415-555-5382",
+                        driverLat = mongoOrder.driverLat,
+                        driverLng = mongoOrder.driverLng,
+                        customerLat = resolvedCustomerLat,
+                        customerLng = resolvedCustomerLng,
+                        restaurantLat = resolvedRestaurantLat,
+                        restaurantLng = resolvedRestaurantLng,
+                        ratingGiven = 0f,
+                        reviewText = "",
+                        reviewSentiment = "Neutral"
+                    )
+                    localOrderId = dao.insertOrder(newOrder).toInt()
+                    mongoOrderIdMap[localOrderId] = mongoOrder.id
+                    dao.clearCart()
+                    startServerDrivenTracking(localOrderId, mongoOrder.id)
+                    return@withContext localOrderId
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("AppRepository", "Failed to checkout on MongoDB backend, using local simulation fallback: ${e.message}")
         }
 
-        val resolvedRestaurantLat = if (isFar && userLat != null) {
-            userLat + 0.0068
-        } else {
-            rawRestaurantLat
-        }
-
-        val resolvedRestaurantLng = if (isFar && userLng != null) {
-            userLng - 0.0072
-        } else {
-            rawRestaurantLng
-        }
-
+        // FALLBACK: If API fails, run the original local Room simulation
         val newOrder = OrderEntity(
             restaurantId = restId,
             restaurantName = restName,
@@ -371,7 +549,7 @@ class AppRepository(private val context: Context) {
             timestamp = System.currentTimeMillis(),
             driverName = "Dash Rider",
             driverPhone = "+1 415-555-5382",
-            driverLat = resolvedRestaurantLat, // Seed at restaurant coordinates
+            driverLat = resolvedRestaurantLat,
             driverLng = resolvedRestaurantLng,
             customerLat = resolvedCustomerLat,
             customerLng = resolvedCustomerLng,
@@ -382,56 +560,130 @@ class AppRepository(private val context: Context) {
             reviewSentiment = "Neutral"
         )
 
-        val orderId = dao.insertOrder(newOrder).toInt()
-        
-        // Clear cart
+        localOrderId = dao.insertOrder(newOrder).toInt()
         dao.clearCart()
+        simulateOrderProgress(localOrderId)
+        localOrderId
+    }
 
-        // Spin up order tracking simulation process in background!
-        simulateOrderProgress(orderId)
-
-        orderId
+    private fun startServerDrivenTracking(localOrderId: Int, mongoOrderId: String) {
+        repositoryScope.launch {
+            var isTracking = true
+            var attempts = 0
+            while (isTracking && attempts < 30) {
+                delay(4000)
+                attempts++
+                try {
+                    val response = apiService.trackOrder(mongoOrderId)
+                    if (response.isSuccessful && response.body()?.success == true) {
+                        val updatedOrder = response.body()?.data
+                        if (updatedOrder != null) {
+                            dao.updateOrderStatus(localOrderId, updatedOrder.status)
+                            dao.updateDriverLocation(localOrderId, updatedOrder.driverLat, updatedOrder.driverLng)
+                            Log.d("AppRepository", "Order track sync: status=${updatedOrder.status}, driverLat=${updatedOrder.driverLat}, driverLng=${updatedOrder.driverLng}")
+                            
+                            if (updatedOrder.status == "Delivered" || updatedOrder.status == "Cancelled") {
+                                isTracking = false
+                                if (updatedOrder.status == "Delivered") {
+                                    dao.insertWalletTransaction(
+                                        WalletTransactionEntity(
+                                            type = "Cashback",
+                                            amount = 1.00,
+                                            description = "10% BiteCraft standard order cashback!",
+                                            timestamp = System.currentTimeMillis()
+                                        )
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w("AppRepository", "Error tracking order from remote backend: ${e.message}")
+                }
+            }
+        }
     }
 
     private fun simulateOrderProgress(orderId: Int) {
         repositoryScope.launch {
-            // Live updates simulated like websockets/Socket.IO updates
             delay(4000)
             dao.updateOrderStatus(orderId, "Accepted")
-            
+
             delay(5000)
             dao.updateOrderStatus(orderId, "Preparing")
-            
+
             delay(7000)
             dao.updateOrderStatus(orderId, "OutForDelivery")
 
-            // Assign a random rider name
             val riderNames = listOf("Alex Rider", "Jordan Transporter", "Sam Courier", "Taylor Direct")
-            val selectedRider = riderNames.random()
-            
-            // Fetch order driver properties
+            riderNames.random()
+
             val order = dao.getOrderById(orderId)
             if (order != null) {
                 val startLat = order.restaurantLat
                 val startLng = order.restaurantLng
                 val endLat = order.customerLat
                 val endLng = order.customerLng
-                
-                val steps = 15
-                for (i in 1..steps) {
-                    val fraction = i.toDouble() / steps
-                    val currentLat = startLat + (endLat - startLat) * fraction
-                    val currentLng = startLng + (endLng - startLng) * fraction
-                    
-                    delay(2500)
-                    dao.updateDriverLocation(orderId, currentLat, currentLng)
+
+                // Fetch real road coordinates using the OSRM endpoint
+                val osrmRoutePoints = try {
+                    val client = okhttp3.OkHttpClient.Builder()
+                        .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                        .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
+                        .build()
+                    val url = "https://router.project-osrm.org/route/v1/driving/$startLng,$startLat;$endLng,$endLat?overview=full&geometries=geojson"
+                    val request = okhttp3.Request.Builder().url(url).build()
+                    val response = client.newCall(request).execute()
+                    val body = response.body?.string() ?: ""
+                    val json = JSONObject(body)
+                    val routes = json.optJSONArray("routes")
+                    val geometry = routes?.optJSONObject(0)?.optJSONObject("geometry")
+                    val coords = geometry?.optJSONArray("coordinates")
+                    val points = mutableListOf<Pair<Double, Double>>()
+                    if (coords != null) {
+                        for (idx in 0 until coords.length()) {
+                            val pair = coords.getJSONArray(idx)
+                            points.add(Pair(pair.getDouble(1), pair.getDouble(0))) // (lat, lng)
+                        }
+                    }
+                    points
+                } catch (e: Exception) {
+                    Log.e("SimulatorOSRM", "Failed to fetch OSRM route for simulation: ${e.message}")
+                    emptyList<Pair<Double, Double>>()
+                }
+
+                if (osrmRoutePoints.isNotEmpty()) {
+                    // Subsample to max 15 steps to keep simulation duration reasonable
+                    val maxSteps = 15
+                    val stepSize = Math.max(1, osrmRoutePoints.size / maxSteps)
+                    val sampledPoints = mutableListOf<Pair<Double, Double>>()
+                    for (idx in 0 until osrmRoutePoints.size step stepSize) {
+                        sampledPoints.add(osrmRoutePoints[idx])
+                    }
+                    // Ensure the last point is always the destination
+                    if (sampledPoints.lastOrNull() != osrmRoutePoints.last()) {
+                        sampledPoints.add(osrmRoutePoints.last())
+                    }
+
+                    for (point in sampledPoints) {
+                        delay(2500)
+                        dao.updateDriverLocation(orderId, point.first, point.second)
+                    }
+                } else {
+                    // Fallback to straight line if OSRM fails
+                    val steps = 15
+                    for (i in 1..steps) {
+                        val fraction = i.toDouble() / steps
+                        val currentLat = startLat + (endLat - startLat) * fraction
+                        val currentLng = startLng + (endLng - startLng) * fraction
+                        delay(2500)
+                        dao.updateDriverLocation(orderId, currentLat, currentLng)
+                    }
                 }
             }
 
             dao.updateOrderStatus(orderId, "Delivered")
-            
-            // Add a little dynamic cashback refund simulation to Loyalty Points / Wallet if user has Gold!
-            // Let's credit the cashback to wallet automatically
+
             dao.insertWalletTransaction(
                 WalletTransactionEntity(
                     type = "Cashback",
@@ -446,13 +698,12 @@ class AppRepository(private val context: Context) {
     suspend fun addPromoTextReview(orderId: Int, rating: Float, reviewText: String) = withContext(Dispatchers.IO) {
         val sentiment = GeminiClient.analyzeSentiment(reviewText)
         dao.submitOrderReview(orderId, rating, reviewText, sentiment)
-        
-        // Credit cashback if review is Positive to loyalty program
+
         if (sentiment == "Positive") {
             dao.insertWalletTransaction(
                 WalletTransactionEntity(
                     type = "Cashback",
-                    amount = 2.00, // Refund or credit positive loyalty feedback!
+                    amount = 2.00,
                     description = "Loyalty feedback bonus for order #$orderId!",
                     timestamp = System.currentTimeMillis()
                 )
@@ -462,11 +713,141 @@ class AppRepository(private val context: Context) {
 
     suspend fun insertChatMessage(sender: String, message: String) = withContext(Dispatchers.IO) {
         dao.insertChatMessage(ChatMessageEntity(sender = sender, message = message, timestamp = System.currentTimeMillis()))
-        
-        // Let chatBot respond
+
         val allHistory = dao.getChatMessages().first()
         val botReply = GeminiClient.chatWithAiSupport(allHistory, message)
-        
+
         dao.insertChatMessage(ChatMessageEntity(sender = "Assistant", message = botReply, timestamp = System.currentTimeMillis()))
     }
+
+    // --- Family Management ---
+    suspend fun addFamilyMember(name: String, email: String, spendingLimit: Double, avatarColor: Long) = withContext(Dispatchers.IO) {
+        dao.insertFamilyMember(
+            FamilyMemberEntity(
+                name = name,
+                email = email,
+                avatarColor = avatarColor,
+                spendingLimit = spendingLimit,
+                monthlySpent = 0.0,
+                isAdmin = false
+            )
+        )
+        Log.d("AppRepository", "Added family member: $name")
+    }
+
+    suspend fun removeFamilyMember(id: Int) = withContext(Dispatchers.IO) {
+        dao.deactivateMember(id)
+    }
+
+    suspend fun updateMemberSpendingLimit(id: Int, limit: Double) = withContext(Dispatchers.IO) {
+        dao.updateMemberSpendingLimit(id, limit)
+    }
+
+    suspend fun getMemberCount(): Int = withContext(Dispatchers.IO) {
+        dao.getFamilyMemberCount()
+    }
+
+    suspend fun getTotalFamilySpend(): Double = withContext(Dispatchers.IO) {
+        dao.getTotalFamilySpending() ?: 0.0
+    }
+
+    // --- Payment Methods ---
+    suspend fun addPaymentMethod(type: String, label: String, maskedValue: String) = withContext(Dispatchers.IO) {
+        dao.insertPaymentMethod(
+            PaymentMethodEntity(type = type, label = label, maskedValue = maskedValue)
+        )
+    }
+
+    suspend fun removePaymentMethod(id: Int) = withContext(Dispatchers.IO) {
+        dao.deletePaymentMethod(id)
+    }
+
+    suspend fun setDefaultPaymentMethod(id: Int) = withContext(Dispatchers.IO) {
+        dao.clearDefaultPaymentMethod()
+        dao.setDefaultPaymentMethod(id)
+    }
+
+    // --- UPI Payment Simulation ---
+    suspend fun simulateUpiPayment(upiId: String, amount: Double, otp: String): Boolean = withContext(Dispatchers.IO) {
+        delay(2000) // Simulate network call
+        if (otp == "123456") {
+            // Success - add to wallet as a deposit record for tracking
+            Log.d("AppRepository", "UPI Payment success: $upiId, amount=$amount")
+            true
+        } else {
+            Log.d("AppRepository", "UPI Payment failed: wrong OTP")
+            false
+        }
+    }
+
+    // --- Card Payment Simulation ---
+    suspend fun simulateCardPayment(cardLast4: String, amount: Double): Boolean = withContext(Dispatchers.IO) {
+        delay(2500)
+        // Accept test card 4242 or any 16-digit card
+        val success = cardLast4.length == 4
+        Log.d("AppRepository", "Card Payment ${if (success) "success" else "failed"}: ****$cardLast4, amount=$amount")
+        success
+    }
+
+    // --- User Authentication ---
+    suspend fun loginOrCreateUser(phone: String, name: String): UserEntity = withContext(Dispatchers.IO) {
+        val existing = dao.getUserByPhone(phone)
+        if (existing != null) {
+            val token = java.util.UUID.randomUUID().toString()
+            dao.updateUserSession(phone, token, System.currentTimeMillis())
+            if (name.isNotEmpty() && existing.name.isEmpty()) {
+                dao.updateUserProfile(phone, name, existing.email)
+            }
+            existing.copy(name = name.ifEmpty { existing.name })
+        } else {
+            val token = java.util.UUID.randomUUID().toString()
+            val newUser = UserEntity(
+                phone = phone,
+                name = name,
+                sessionToken = token,
+                isVerified = true
+            )
+            val id = dao.insertUser(newUser).toInt()
+            newUser.copy(id = id)
+        }
+    }
+
+    // --- Saved Addresses ---
+    suspend fun saveAddress(userId: Int, label: String, fullAddress: String, lat: Double, lng: Double) = withContext(Dispatchers.IO) {
+        val existingDefault = dao.getDefaultAddress(userId)
+        val isFirst = existingDefault == null
+        val addr = SavedAddressEntity(
+            userId = userId,
+            label = label,
+            fullAddress = fullAddress,
+            latitude = lat,
+            longitude = lng,
+            isDefault = isFirst // first saved address becomes default automatically
+        )
+        val newId = dao.insertSavedAddress(addr).toInt()
+        if (!isFirst) {
+            // If there's already a default, keep it (don't auto-replace)
+        } else {
+            dao.updateDefaultAddress(dao.getUserByPhone("$userId")?.phone ?: "", newId)
+        }
+
+        // Synchronize saved address location with remote MongoDB Atlas backend
+        try {
+            apiService.updateUserLocation(
+                com.example.data.api.LocationUpdateRequest(
+                    userId = "$userId",
+                    lat = lat,
+                    lng = lng,
+                    address = fullAddress
+                )
+            )
+            Log.d("AppRepository", "Synced address to remote MongoDB backend")
+        } catch (e: Exception) {
+            Log.w("AppRepository", "Failed to sync address to remote MongoDB backend: ${e.message}")
+        }
+
+        Log.d("AppRepository", "Saved address '$label' for user $userId: $fullAddress")
+    }
 }
+
+

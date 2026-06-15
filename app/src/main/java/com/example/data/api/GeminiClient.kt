@@ -15,7 +15,7 @@ import java.util.concurrent.TimeUnit
 
 object GeminiClient {
     private const val TAG = "GeminiClient"
-    private const val MODEL = "gemini-3.5-flash"
+    private const val MODEL = "gemini-2.0-flash"
     private const val BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/$MODEL:generateContent"
 
     private val client = OkHttpClient.Builder()
