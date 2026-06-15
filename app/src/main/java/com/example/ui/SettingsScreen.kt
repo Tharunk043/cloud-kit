@@ -67,6 +67,8 @@ fun SettingsScreen(
     userName: String,
     userPhone: String,
     userEmail: String,
+    ordersCount: Int,
+    ordersSavings: Double,
     onSaveProfile: (String, String) -> Unit,
     onNavigateToOrders: () -> Unit,
     onBack: () -> Unit = {}
@@ -122,7 +124,16 @@ fun SettingsScreen(
 
             // ── Hero gradient header ─────────────────────────────────────────
             item {
-                SettingsHeader(isGoldMember = isGoldMember, onToggleGold = onToggleGold)
+                SettingsHeader(
+                    userName = userName,
+                    userEmail = userEmail,
+                    userPhone = userPhone,
+                    isGoldMember = isGoldMember,
+                    ordersCount = ordersCount,
+                    ordersSavings = ordersSavings,
+                    onToggleGold = onToggleGold,
+                    onEditProfile = { showProfileDialog = true }
+                )
             }
 
             // ── ACCOUNT section ──────────────────────────────────────────────
@@ -626,7 +637,16 @@ fun SettingsScreen(
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun SettingsHeader(isGoldMember: Boolean, onToggleGold: () -> Unit) {
+private fun SettingsHeader(
+    userName: String,
+    userEmail: String,
+    userPhone: String,
+    isGoldMember: Boolean,
+    ordersCount: Int,
+    ordersSavings: Double,
+    onToggleGold: () -> Unit,
+    onEditProfile: () -> Unit
+) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -676,14 +696,24 @@ private fun SettingsHeader(isGoldMember: Boolean, onToggleGold: () -> Unit) {
                             width = if (isGoldMember) 2.5.dp else 2.dp,
                             color = if (isGoldMember) GoldColour else Color.White.copy(alpha = 0.6f),
                             shape = CircleShape
-                        ),
+                        )
+                        .clickable { onEditProfile() },
                     contentAlignment = Alignment.Center
                 ) {
                     if (isGoldMember) {
                         Text("👑", fontSize = 26.sp)
                     } else {
+                        val initials = remember(userName) {
+                            if (userName.isBlank()) "FD" else {
+                                userName.split(" ")
+                                    .filter { it.isNotEmpty() }
+                                    .map { it[0].uppercaseChar() }
+                                    .joinToString("")
+                                    .take(2)
+                            }
+                        }
                         Text(
-                            text = "TV",
+                            text = initials,
                             fontSize = 20.sp,
                             fontWeight = FontWeight.Black,
                             color = Color.White
@@ -691,13 +721,17 @@ private fun SettingsHeader(isGoldMember: Boolean, onToggleGold: () -> Unit) {
                     }
                 }
 
-                Column(modifier = Modifier.weight(1f)) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onEditProfile() }
+                ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Text(
-                            text = "Tharun V",
+                            text = userName.ifEmpty { "Set Name" },
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Black,
                             color = Color.White
@@ -720,12 +754,24 @@ private fun SettingsHeader(isGoldMember: Boolean, onToggleGold: () -> Unit) {
 
                     Spacer(modifier = Modifier.height(2.dp))
 
-                    Text(
-                        text = "tharun.v@bitecraft.app",
-                        fontSize = 12.sp,
-                        color = Color.White.copy(alpha = 0.85f),
-                        fontWeight = FontWeight.Medium
-                    )
+                    if (userEmail.isEmpty()) {
+                        Button(
+                            onClick = onEditProfile,
+                            colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.25f)),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                            modifier = Modifier.height(26.dp)
+                        ) {
+                            Text("Set Email", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    } else {
+                        Text(
+                            text = userEmail,
+                            fontSize = 12.sp,
+                            color = Color.White.copy(alpha = 0.85f),
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                     Text(
                         text = "Member since Jan 2024",
                         fontSize = 10.sp,
@@ -736,12 +782,12 @@ private fun SettingsHeader(isGoldMember: Boolean, onToggleGold: () -> Unit) {
                 // Quick stats row inline
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("🛍️", fontSize = 16.sp)
-                    Text("47", fontSize = 13.sp, fontWeight = FontWeight.Black, color = Color.White)
+                    Text("$ordersCount", fontSize = 13.sp, fontWeight = FontWeight.Black, color = Color.White)
                     Text("Orders", fontSize = 9.sp, color = Color.White.copy(alpha = 0.75f))
                 }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text("💰", fontSize = 16.sp)
-                    Text("$128", fontSize = 13.sp, fontWeight = FontWeight.Black, color = Color.White)
+                    Text(String.format("$%.0f", ordersSavings), fontSize = 13.sp, fontWeight = FontWeight.Black, color = Color.White)
                     Text("Saved", fontSize = 9.sp, color = Color.White.copy(alpha = 0.75f))
                 }
             }

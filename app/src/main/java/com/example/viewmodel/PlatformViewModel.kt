@@ -31,6 +31,7 @@ import com.example.data.local.UserEntity
 // Payment state enum
 enum class PaymentState { IDLE, PROCESSING, OTP_PENDING, SUCCESS, FAILURE }
 
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class PlatformViewModel(application: Application) : AndroidViewModel(application) {
     val repository = AppRepository(application)
 
@@ -43,15 +44,34 @@ class PlatformViewModel(application: Application) : AndroidViewModel(application
     val activeCategory = MutableStateFlow("All")
 
     val userAddress = MutableStateFlow("Tap to set delivery location")
-    val isGoldMember = MutableStateFlow(false)
     val isDarkTheme = MutableStateFlow(false)
 
-    // --- Auth & User Identity ---
-    val isLoggedIn = MutableStateFlow(false)
-    val currentUserPhone = MutableStateFlow("")
-    val currentUserName = MutableStateFlow("Foodie")
-    val currentUserEmail = MutableStateFlow("")
-    val currentUserId = MutableStateFlow(-1)
+    // --- Auth & User Identity (Directly from Database, no cache) ---
+    val currentUserFlow: kotlinx.coroutines.flow.Flow<UserEntity?> = repository.dao.observeCurrentUser()
+
+    val isLoggedIn: StateFlow<Boolean> = currentUserFlow
+        .map { it != null }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    val isGoldMember: StateFlow<Boolean> = currentUserFlow
+        .map { it?.isGoldMember ?: false }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    val currentUserPhone: StateFlow<String> = currentUserFlow
+        .map { it?.phone ?: "" }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "")
+
+    val currentUserName: StateFlow<String> = currentUserFlow
+        .map { it?.name ?: "Foodie" }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "Foodie")
+
+    val currentUserEmail: StateFlow<String> = currentUserFlow
+        .map { it?.email ?: "" }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "")
+
+    val currentUserId: StateFlow<Int> = currentUserFlow
+        .map { it?.id ?: -1 }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), -1)
 
     val savedAddresses: StateFlow<List<SavedAddressEntity>> = currentUserId
         .flatMapLatest { uid ->
@@ -62,40 +82,40 @@ class PlatformViewModel(application: Application) : AndroidViewModel(application
 
     init {
         viewModelScope.launch {
-            repository.dao.getCurrentUser()?.let { user ->
-                currentUserPhone.value = user.phone
-                currentUserName.value = user.name
-                currentUserEmail.value = user.email
-                currentUserId.value = user.id
-                isLoggedIn.value = true
-
-                // Load default address locally
-                repository.dao.getDefaultAddress(user.id)?.let {
-                    userAddress.value = it.fullAddress
-                }
-
-                // Restore active order locally on startup
-                try {
-                    val activeOrder = repository.orders.first().find {
-                        it.status == "Placed" || it.status == "Accepted" || it.status == "Preparing" || it.status == "OutForDelivery"
+            // Load default address locally
+            currentUserFlow.collect { user ->
+                if (user != null) {
+                    repository.dao.getDefaultAddress(user.id)?.let {
+                        userAddress.value = it.fullAddress
                     }
-                    if (activeOrder != null) {
-                        activeOrderId.value = activeOrder.id
-                    }
-                } catch (e: Exception) {
-                    // Ignore startup recovery errors
                 }
+            }
+        }
 
-                // Sync profile & address from remote in the background
-                try {
-                    val syncedUser = repository.loginOrCreateUser(user.phone, user.name)
-                    currentUserEmail.value = syncedUser.email
+        viewModelScope.launch {
+            // Restore active order locally on startup
+            try {
+                val activeOrder = repository.orders.first().find {
+                    it.status == "Placed" || it.status == "Accepted" || it.status == "Preparing" || it.status == "OutForDelivery"
+                }
+                if (activeOrder != null) {
+                    activeOrderId.value = activeOrder.id
+                }
+            } catch (e: Exception) {
+                // Ignore startup recovery errors
+            }
+
+            // Sync profile & address from remote in the background
+            try {
+                val localUser = repository.dao.getCurrentUser()
+                if (localUser != null) {
+                    val syncedUser = repository.loginOrCreateUser(localUser.phone, localUser.name)
                     repository.dao.getDefaultAddress(syncedUser.id)?.let {
                         userAddress.value = it.fullAddress
                     }
-                } catch (e: Exception) {
-                    // Ignore background sync errors when offline
                 }
+            } catch (e: Exception) {
+                // Ignore background sync errors when offline
             }
         }
     }
@@ -259,7 +279,13 @@ class PlatformViewModel(application: Application) : AndroidViewModel(application
 
     // Membership toggle
     fun toggleGoldMembership() {
-        isGoldMember.value = !isGoldMember.value
+        viewModelScope.launch {
+            val user = repository.dao.getCurrentUser()
+            if (user != null) {
+                val updated = user.copy(isGoldMember = !user.isGoldMember)
+                repository.dao.insertUser(updated)
+            }
+        }
     }
 
     // Checkout with enhanced payment support
@@ -440,12 +466,6 @@ class PlatformViewModel(application: Application) : AndroidViewModel(application
     fun loginUser(phone: String, name: String) {
         viewModelScope.launch {
             val user = repository.loginOrCreateUser(phone, name)
-            currentUserPhone.value = user.phone
-            currentUserName.value = user.name.ifEmpty { name }
-            currentUserEmail.value = user.email
-            currentUserId.value = user.id
-            isLoggedIn.value = true
-            
             // Set default address if it exists
             repository.dao.getDefaultAddress(user.id)?.let {
                 userAddress.value = it.fullAddress
@@ -454,13 +474,7 @@ class PlatformViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun logoutUser() {
-        isLoggedIn.value = false
-        currentUserPhone.value = ""
-        currentUserName.value = "Foodie"
-        currentUserEmail.value = ""
-        currentUserId.value = -1
         userAddress.value = "Tap to set delivery location"
-        
         viewModelScope.launch {
             repository.dao.clearUsers()
         }
@@ -471,8 +485,6 @@ class PlatformViewModel(application: Application) : AndroidViewModel(application
             val phone = currentUserPhone.value
             if (phone.isNotEmpty()) {
                 repository.dao.updateUserProfile(phone, name, email)
-                currentUserName.value = name
-                currentUserEmail.value = email
                 try {
                     repository.loginOrCreateUser(phone, name, email)
                 } catch (e: Exception) {

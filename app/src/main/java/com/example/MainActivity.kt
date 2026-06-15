@@ -108,6 +108,10 @@ class MainActivity : ComponentActivity() {
                                     val userName by viewModel.currentUserName.collectAsState()
                                     val userPhone by viewModel.currentUserPhone.collectAsState()
                                     val userEmail by viewModel.currentUserEmail.collectAsState()
+                                    val ordersList by viewModel.orders.collectAsState()
+                                    val ordersCount = ordersList.size
+                                    val ordersSavings = ordersList.count { it.status == "Delivered" } * (if (isGold) 3.99 else 1.00)
+
                                     SettingsScreen(
                                         onNavigateToFamily = {
                                             viewModel.showSettingsScreen.value = false
@@ -120,12 +124,14 @@ class MainActivity : ComponentActivity() {
                                         userName = userName,
                                         userPhone = userPhone,
                                         userEmail = userEmail,
+                                        ordersCount = ordersCount,
+                                        ordersSavings = ordersSavings,
                                         onSaveProfile = { name, email ->
                                             viewModel.updateProfile(name, email)
                                         },
                                         onNavigateToOrders = {
                                             viewModel.showSettingsScreen.value = false
-                                            currentCustomerScreen = Screen.Tracking
+                                            currentCustomerScreen = Screen.OrdersHistory
                                         },
                                         onBack = { viewModel.showSettingsScreen.value = false }
                                     )

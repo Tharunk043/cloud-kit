@@ -125,6 +125,7 @@ sealed class Screen(val route: String) {
     object Support : Screen("support")
     object Settings : Screen("settings")
     object Family : Screen("family")
+    object OrdersHistory : Screen("orders_history")
 }
 
 @Composable
@@ -522,13 +523,21 @@ fun CustomerSection(
                 .padding(padding)
         ) {
             when (currentScreen) {
-                is Screen.Home -> ExploreView(viewModel, onNavigate)
+                is Screen.Home -> ExploreView(viewModel, onNavigate, onOpenSettings)
                 is Screen.Detail -> RestaurantDetailView(viewModel, onNavigate)
                 is Screen.Cart -> ClientCartView(viewModel, onNavigate)
                 is Screen.Tracking -> ActiveOrderTrackingView(viewModel, onNavigate)
                 is Screen.Wallet -> ClientWalletView(viewModel, onOpenFamily = onOpenFamily)
                 is Screen.Support -> GeminiSupportView(viewModel)
-                else -> ExploreView(viewModel, onNavigate)
+                is Screen.OrdersHistory -> OrdersHistoryView(
+                    viewModel = viewModel,
+                    onNavigate = onNavigate,
+                    onBack = {
+                        onNavigate(Screen.Home)
+                        onOpenSettings()
+                    }
+                )
+                else -> ExploreView(viewModel, onNavigate, onOpenSettings)
             }
         }
     }
@@ -537,7 +546,8 @@ fun CustomerSection(
 @Composable
 fun ExploreView(
     viewModel: PlatformViewModel,
-    onNavigate: (Screen) -> Unit
+    onNavigate: (Screen) -> Unit,
+    onOpenSettings: () -> Unit
 ) {
     val search by viewModel.searchQuery.collectAsState()
     val category by viewModel.activeCategory.collectAsState()
@@ -672,6 +682,16 @@ fun ExploreView(
                     }
 
                     // User gold active tag or initials avatar
+                    val currentName by viewModel.currentUserName.collectAsState()
+                    val initials = remember(currentName) {
+                        if (currentName.isBlank()) "FD" else {
+                            currentName.split(" ")
+                                .filter { it.isNotEmpty() }
+                                .map { it[0].uppercaseChar() }
+                                .joinToString("")
+                                .take(2)
+                        }
+                    }
                     Box(
                         modifier = Modifier
                             .size(38.dp)
@@ -679,14 +699,14 @@ fun ExploreView(
                             .background(
                                 if (isGold) Color(0xFFFFD54F) else MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
                             )
-                            .clickable { viewModel.toggleGoldMembership() },
+                            .clickable { onOpenSettings() },
                         contentAlignment = Alignment.Center
                     ) {
                         if (isGold) {
                             Text("👑", fontSize = 18.sp)
                         } else {
                             Text(
-                                text = "TV",
+                                text = initials,
                                 fontWeight = FontWeight.Black,
                                 color = MaterialTheme.colorScheme.primary,
                                 fontSize = 12.sp
