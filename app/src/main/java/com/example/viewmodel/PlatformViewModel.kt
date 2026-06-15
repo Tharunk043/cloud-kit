@@ -59,6 +59,32 @@ class PlatformViewModel(application: Application) : AndroidViewModel(application
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    init {
+        viewModelScope.launch {
+            repository.dao.getCurrentUser()?.let { user ->
+                currentUserPhone.value = user.phone
+                currentUserName.value = user.name
+                currentUserId.value = user.id
+                isLoggedIn.value = true
+
+                // Load default address locally
+                repository.dao.getDefaultAddress(user.id)?.let {
+                    userAddress.value = it.fullAddress
+                }
+
+                // Sync profile & address from remote in the background
+                try {
+                    val syncedUser = repository.loginOrCreateUser(user.phone, user.name)
+                    repository.dao.getDefaultAddress(syncedUser.id)?.let {
+                        userAddress.value = it.fullAddress
+                    }
+                } catch (e: Exception) {
+                    // Ignore background sync errors when offline
+                }
+            }
+        }
+    }
+
     val deviceLatitude = MutableStateFlow<Double?>(null)
     val deviceLongitude = MutableStateFlow<Double?>(null)
 
@@ -400,6 +426,11 @@ class PlatformViewModel(application: Application) : AndroidViewModel(application
             currentUserName.value = user.name.ifEmpty { name }
             currentUserId.value = user.id
             isLoggedIn.value = true
+            
+            // Set default address if it exists
+            repository.dao.getDefaultAddress(user.id)?.let {
+                userAddress.value = it.fullAddress
+            }
         }
     }
 
@@ -409,6 +440,10 @@ class PlatformViewModel(application: Application) : AndroidViewModel(application
         currentUserName.value = "Foodie"
         currentUserId.value = -1
         userAddress.value = "Tap to set delivery location"
+        
+        viewModelScope.launch {
+            repository.dao.clearUsers()
+        }
     }
 
     fun saveDeliveryAddress(label: String, address: String, lat: Double, lng: Double) {

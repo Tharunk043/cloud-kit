@@ -336,6 +336,9 @@ interface PlatformDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertUser(user: UserEntity): Long
 
+    @Query("DELETE FROM users")
+    suspend fun clearUsers()
+
     @Query("UPDATE users SET name = :name, email = :email WHERE phone = :phone")
     suspend fun updateUserProfile(phone: String, name: String, email: String)
 
