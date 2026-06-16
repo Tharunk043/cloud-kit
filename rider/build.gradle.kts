@@ -92,3 +92,5 @@ dependencies {
   "ksp"(libs.androidx.room.compiler)
   "ksp"(libs.moshi.kotlin.codegen)
 }
+
+tasks.register("prepareKotlinBuildScriptModel") {}
