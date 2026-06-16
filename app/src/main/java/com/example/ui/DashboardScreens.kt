@@ -3233,14 +3233,21 @@ fun ClientWalletView(viewModel: PlatformViewModel, onOpenFamily: () -> Unit = {}
     val transactions by viewModel.walletTx.collectAsState()
     val familyMembers by viewModel.familyMembers.collectAsState()
     val totalFamilySpend by viewModel.totalFamilySpend.collectAsState()
+    val isUpdating by viewModel.isWalletUpdating.collectAsState()
 
     var depositAmount by remember { mutableStateOf("10.00") }
     var showUpiDeposit by remember { mutableStateOf(false) }
 
+    // Auto-refresh wallet balance and transactions on entry
+    LaunchedEffect(Unit) {
+        viewModel.refreshWallet()
+    }
+
     // Quick deposit presets
     val quickAmounts = listOf(100.0, 200.0, 500.0, 1000.0)
 
-    LazyColumn(
+    Box(modifier = Modifier.fillMaxSize()) {
+        LazyColumn(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background),
@@ -3526,6 +3533,84 @@ fun ClientWalletView(viewModel: PlatformViewModel, onOpenFamily: () -> Unit = {}
                         fontSize = 14.sp,
                         color = if (isCredit) Color(0xFF16A34A) else Color(0xFFDC2626)
                     )
+                }
+            }
+        }
+
+        // UPI Deposit Dialog
+        if (showUpiDeposit) {
+            AlertDialog(
+                onDismissRequest = { showUpiDeposit = false },
+                title = {
+                    Text("Add Money to Wallet", fontWeight = FontWeight.Bold)
+                },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(
+                            text = "Enter the amount you would like to deposit to your BiteCraft Wallet.",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        OutlinedTextField(
+                            value = depositAmount,
+                            onValueChange = { depositAmount = it },
+                            placeholder = { Text("Enter amount") },
+                            modifier = Modifier.fillMaxWidth().testTag("wallet_dialog_deposit_input"),
+                            shape = RoundedCornerShape(12.dp),
+                            singleLine = true,
+                            prefix = { Text("₹", fontWeight = FontWeight.Bold) }
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            val amt = depositAmount.toDoubleOrNull() ?: 10.0
+                            viewModel.addFunds(amt)
+                            showUpiDeposit = false
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                    ) {
+                        Text("Add Funds", fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showUpiDeposit = false }) {
+                        Text("Cancel", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                },
+                shape = RoundedCornerShape(20.dp)
+            )
+        }
+
+        // Overlay Loading Spinner during wallet operations
+        if (isUpdating) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.4f))
+                    .clickable(enabled = false) {},
+                contentAlignment = Alignment.Center
+            ) {
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "Updating Wallet...",
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
                 }
             }
         }

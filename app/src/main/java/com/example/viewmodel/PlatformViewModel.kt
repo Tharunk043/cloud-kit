@@ -270,10 +270,29 @@ class PlatformViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    val isWalletUpdating = MutableStateFlow(false)
+
     // Wallet funding
     fun addFunds(amount: Double) {
         viewModelScope.launch {
-            repository.addWalletFunds(amount)
+            isWalletUpdating.value = true
+            try {
+                repository.addWalletFunds(amount)
+            } finally {
+                isWalletUpdating.value = false
+            }
+        }
+    }
+
+    // Refresh wallet balance and transactions from remote Supabase DB
+    fun refreshWallet() {
+        viewModelScope.launch {
+            isWalletUpdating.value = true
+            try {
+                repository.getWalletBalance()
+            } finally {
+                isWalletUpdating.value = false
+            }
         }
     }
 
