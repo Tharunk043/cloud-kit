@@ -832,16 +832,6 @@ fun ExploreView(
         // Swiggy Service Verticals Directory Quick Grid
         item {
             Column(modifier = Modifier.padding(vertical = 4.dp)) {
-                var isVisible by remember { mutableStateOf(false) }
-                LaunchedEffect(Unit) {
-                    isVisible = true
-                }
-                
-                val scale1 by animateFloatAsState(targetValue = if (isVisible) 1f else 0.5f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow), label = "s1")
-                val scale2 by animateFloatAsState(targetValue = if (isVisible) 1f else 0.5f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow), label = "s2")
-                val scale3 by animateFloatAsState(targetValue = if (isVisible) 1f else 0.5f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow), label = "s3")
-                val scale4 by animateFloatAsState(targetValue = if (isVisible) 1f else 0.5f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow), label = "s4")
-
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -853,10 +843,6 @@ fun ExploreView(
                         modifier = Modifier
                             .weight(1f)
                             .height(115.dp)
-                            .graphicsLayer {
-                                scaleX = scale1
-                                scaleY = scale1
-                            }
                             .clip(RoundedCornerShape(16.dp))
                             .background(
                                 Brush.linearGradient(
@@ -891,7 +877,7 @@ fun ExploreView(
                                 Image(
                                     painter = painterResource(id = com.example.R.drawable.ic_category_burger),
                                     contentDescription = "Food Delivery",
-                                    modifier = Modifier.size(32.dp)
+                                    modifier = Modifier.size(48.dp)
                                 )
                             }
                         }
@@ -902,10 +888,6 @@ fun ExploreView(
                         modifier = Modifier
                             .weight(1f)
                             .height(115.dp)
-                            .graphicsLayer {
-                                scaleX = scale2
-                                scaleY = scale2
-                            }
                             .clip(RoundedCornerShape(16.dp))
                             .background(
                                 Brush.linearGradient(
@@ -940,7 +922,7 @@ fun ExploreView(
                                 Image(
                                     painter = painterResource(id = com.example.R.drawable.ic_service_instamart),
                                     contentDescription = "Instamart",
-                                    modifier = Modifier.size(32.dp)
+                                    modifier = Modifier.size(48.dp)
                                 )
                             }
                         }
@@ -958,10 +940,6 @@ fun ExploreView(
                         modifier = Modifier
                             .weight(1f)
                             .height(115.dp)
-                            .graphicsLayer {
-                                scaleX = scale3
-                                scaleY = scale3
-                            }
                             .clip(RoundedCornerShape(16.dp))
                             .background(
                                 Brush.linearGradient(
@@ -996,7 +974,7 @@ fun ExploreView(
                                 Image(
                                     painter = painterResource(id = com.example.R.drawable.ic_service_dineout),
                                     contentDescription = "Dineout",
-                                    modifier = Modifier.size(32.dp)
+                                    modifier = Modifier.size(48.dp)
                                 )
                             }
                         }
@@ -1007,10 +985,6 @@ fun ExploreView(
                         modifier = Modifier
                             .weight(1f)
                             .height(115.dp)
-                            .graphicsLayer {
-                                scaleX = scale4
-                                scaleY = scale4
-                            }
                             .clip(RoundedCornerShape(16.dp))
                             .background(
                                 Brush.linearGradient(
@@ -1045,7 +1019,7 @@ fun ExploreView(
                                 Image(
                                     painter = painterResource(id = com.example.R.drawable.ic_service_genie),
                                     contentDescription = "Genie Courier",
-                                    modifier = Modifier.size(32.dp)
+                                    modifier = Modifier.size(48.dp)
                                 )
                             }
                         }
@@ -1141,36 +1115,9 @@ fun ExploreView(
                             }
                         }
 
-                        // Staggered pop-in bounce animation
-                        var isVisible by remember { mutableStateOf(false) }
-                        LaunchedEffect(catEntity.id) {
-                            delay(50L * index)
-                            isVisible = true
-                        }
-
-                        val scale by animateFloatAsState(
-                            targetValue = if (isVisible) 1f else 0.3f,
-                            animationSpec = spring(
-                                dampingRatio = Spring.DampingRatioMediumBouncy,
-                                stiffness = Spring.StiffnessLow
-                            ),
-                            label = "category_scale"
-                        )
-
-                        val alpha by animateFloatAsState(
-                            targetValue = if (isVisible) 1f else 0f,
-                            animationSpec = tween(durationMillis = 300, easing = LinearOutSlowInEasing),
-                            label = "category_alpha"
-                        )
-
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier
-                                .graphicsLayer {
-                                    scaleX = scale
-                                    scaleY = scale
-                                    this.alpha = alpha
-                                }
                                 .clickable {
                                     if (isSelected) {
                                         viewModel.activeCategory.value = "All"
@@ -1182,9 +1129,9 @@ fun ExploreView(
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(66.dp)
+                                    .size(76.dp)
                                     .clip(CircleShape)
-                                    .background(parsedColor)
+                                    .background(if (isSelected) parsedColor.copy(alpha = 0.2f) else Color.Transparent)
                                     .border(
                                         width = if (isSelected) 2.dp else 0.dp,
                                         color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
@@ -1195,7 +1142,7 @@ fun ExploreView(
                                 Image(
                                     painter = painterResource(id = drawableId),
                                     contentDescription = title,
-                                    modifier = Modifier.size(42.dp),
+                                    modifier = Modifier.size(64.dp),
                                     contentScale = ContentScale.Fit
                                 )
                             }
