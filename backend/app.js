@@ -147,12 +147,23 @@ app.get('/', (req, res) => {
   `);
 });
 
+const { pool } = require('./config/db');
+
 // Actuator-like health check endpoint (Open, no auth)
-app.get('/actuator/health', (req, res) => {
-  res.json({
-    status: 'UP',
+app.get('/actuator/health', async (req, res) => {
+  let dbStatus = 'UP';
+  try {
+    await pool.query('SELECT 1;');
+  } catch (err) {
+    console.error('Health check database error:', err.message);
+    dbStatus = 'DOWN';
+  }
+
+  const overallStatus = dbStatus === 'UP' ? 'UP' : 'DOWN';
+  res.status(overallStatus === 'UP' ? 200 : 503).json({
+    status: overallStatus,
     components: {
-      db: { status: 'UP' },
+      db: { status: dbStatus },
       diskSpace: { status: 'UP' },
       ping: { status: 'UP' }
     }
