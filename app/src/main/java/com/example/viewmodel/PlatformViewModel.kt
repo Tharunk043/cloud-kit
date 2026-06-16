@@ -521,4 +521,23 @@ class PlatformViewModel(application: Application) : AndroidViewModel(application
             userAddress.value = address
         }
     }
+
+    fun makeAddressDefault(addressId: Int) {
+        val uid = currentUserId.value
+        if (uid >= 0) {
+            viewModelScope.launch {
+                repository.setDefaultAddress(uid, addressId)
+                // Fetch and update active userAddress to match the new default
+                repository.dao.getDefaultAddress(uid)?.let {
+                    userAddress.value = it.fullAddress
+                }
+            }
+        }
+    }
+
+    fun deleteAddress(addressId: Int) {
+        viewModelScope.launch {
+            repository.deleteAddress(addressId)
+        }
+    }
 }

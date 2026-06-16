@@ -559,24 +559,6 @@ fun ExploreView(
     var isLocatingHome by remember { mutableStateOf(false) }
     var showLocationPicker by remember { mutableStateOf(false) }
 
-    // Location picker sheet — real OSM map
-    if (showLocationPicker) {
-        val devLat = viewModel.deviceLatitude.collectAsState().value ?: 12.9716
-        val devLng = viewModel.deviceLongitude.collectAsState().value ?: 77.5946
-        OSMLocationPickerSheet(
-            initialLat = devLat,
-            initialLng = devLng,
-            onAddressSelected = { address, lat, lng ->
-                viewModel.userAddress.value = address
-                viewModel.updateDeviceLocation(lat, lng)
-                viewModel.saveDeliveryAddress("Home", address, lat, lng)
-                showLocationPicker = false
-                Toast.makeText(context, "📍 Delivery location saved!", Toast.LENGTH_SHORT).show()
-            },
-            onDismiss = { showLocationPicker = false }
-        )
-    }
-
     // Permission launcher — opens location picker after permission granted
     val homeLocationLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -588,6 +570,58 @@ fun ExploreView(
         } else {
             Toast.makeText(context, "Location permission required to use map picker.", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    var showAddressDialog by remember { mutableStateOf(false) }
+    var pendingAddressInfo by remember { mutableStateOf<Triple<String, Double, Double>?>(null) }
+
+    // Address Management Dialog
+    if (showAddressDialog) {
+        AddressManagementDialog(
+            viewModel = viewModel,
+            onDismiss = { showAddressDialog = false },
+            onAddNewAddress = {
+                showAddressDialog = false
+                homeLocationLauncher.launch(
+                    arrayOf(
+                        Manifest.permission.ACCESS_FINE_LOCATION,
+                        Manifest.permission.ACCESS_COARSE_LOCATION
+                    )
+                )
+            }
+        )
+    }
+
+    // Address Label Dialog
+    pendingAddressInfo?.let { info ->
+        AddressLabelDialog(
+            address = info.first,
+            onConfirm = { label ->
+                viewModel.userAddress.value = info.first
+                viewModel.updateDeviceLocation(info.second, info.third)
+                viewModel.saveDeliveryAddress(label, info.first, info.second, info.third)
+                pendingAddressInfo = null
+                Toast.makeText(context, "📍 Delivery location saved as $label!", Toast.LENGTH_SHORT).show()
+            },
+            onDismiss = {
+                pendingAddressInfo = null
+            }
+        )
+    }
+
+    // Location picker sheet — real OSM map
+    if (showLocationPicker) {
+        val devLat = viewModel.deviceLatitude.collectAsState().value ?: 12.9716
+        val devLng = viewModel.deviceLongitude.collectAsState().value ?: 77.5946
+        OSMLocationPickerSheet(
+            initialLat = devLat,
+            initialLng = devLng,
+            onAddressSelected = { address, lat, lng ->
+                pendingAddressInfo = Triple(address, lat, lng)
+                showLocationPicker = false
+            },
+            onDismiss = { showLocationPicker = false }
+        )
     }
 
     // AI Mood fields
@@ -616,12 +650,7 @@ fun ExploreView(
                             .weight(1f)
                             .clip(RoundedCornerShape(10.dp))
                             .clickable {
-                                homeLocationLauncher.launch(
-                                    arrayOf(
-                                        Manifest.permission.ACCESS_FINE_LOCATION,
-                                        Manifest.permission.ACCESS_COARSE_LOCATION
-                                    )
-                                )
+                                showAddressDialog = true
                             }
                             .padding(vertical = 4.dp, horizontal = 2.dp)
                     ) {
@@ -2022,7 +2051,8 @@ fun ClientCartView(
     val isGold by viewModel.isGoldMember.collectAsState()
     val scope = rememberCoroutineScope()
 
-    var checkoutAddress by remember { mutableStateOf("Suite 301, Sector 12, Innovation Block, Cloud City") }
+    val activeAddress by viewModel.userAddress.collectAsState()
+    var checkoutAddress by remember(activeAddress) { mutableStateOf(activeAddress) }
     var selectedPaymentMethod by remember { mutableStateOf("UPI") } // UPI, Credit Card, Wallet, COD
     val walletBal by viewModel.walletBalance.collectAsState()
 
@@ -3536,8 +3566,9 @@ fun ClientWalletView(viewModel: PlatformViewModel, onOpenFamily: () -> Unit = {}
                 }
             }
         }
+    }
 
-        // UPI Deposit Dialog
+    // UPI Deposit Dialog
         if (showUpiDeposit) {
             AlertDialog(
                 onDismissRequest = { showUpiDeposit = false },
@@ -4346,4 +4377,220 @@ fun AdminSection(viewModel: PlatformViewModel) {
             }
         }
     }
+}
+
+// --- SAVED ADDRESS MANAGEMENT DIALOGS ---
+
+@Composable
+fun AddressLabelDialog(
+    address: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var labelInput by remember { mutableStateOf("Home") }
+    val presets = listOf("Home", "Work", "Other")
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text("Label this address", fontWeight = FontWeight.Bold)
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Text(
+                    text = address,
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
+                )
+                
+                // Preset chips
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    presets.forEach { preset ->
+                        val isSelected = labelInput == preset
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = { labelInput = preset },
+                            label = { Text(preset) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                selectedLabelColor = MaterialTheme.colorScheme.primary
+                            )
+                        )
+                    }
+                }
+
+                // Custom text input
+                OutlinedTextField(
+                    value = labelInput,
+                    onValueChange = { labelInput = it },
+                    label = { Text("Address Label") },
+                    placeholder = { Text("e.g. Gym, Friend's house") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("address_label_input")
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(labelInput.trim().ifEmpty { "Address" }) },
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("Save Address")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        },
+        shape = RoundedCornerShape(20.dp)
+    )
+}
+
+@Composable
+fun AddressManagementDialog(
+    viewModel: PlatformViewModel,
+    onDismiss: () -> Unit,
+    onAddNewAddress: () -> Unit
+) {
+    val savedAddresses by viewModel.savedAddresses.collectAsState()
+    val activeAddress by viewModel.userAddress.collectAsState()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text("Select Delivery Address", fontWeight = FontWeight.Bold)
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 400.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                if (savedAddresses.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("No saved addresses yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                } else {
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.weight(1f, fill = false)
+                    ) {
+                        items(savedAddresses) { addr ->
+                            val isDefault = addr.isDefault
+                            val isActive = addr.fullAddress == activeAddress
+                            
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        viewModel.userAddress.value = addr.fullAddress
+                                        viewModel.updateDeviceLocation(addr.latitude, addr.longitude)
+                                        onDismiss()
+                                    },
+                                shape = RoundedCornerShape(12.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (isActive) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) 
+                                                     else MaterialTheme.colorScheme.surface
+                                ),
+                                border = if (isActive) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = when(addr.label.lowercase()) {
+                                            "home" -> Icons.Filled.Home
+                                            "work" -> Icons.Filled.Work
+                                            else -> Icons.Filled.Place
+                                        },
+                                        contentDescription = null,
+                                        tint = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                text = addr.label,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                            )
+                                            if (isDefault) {
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Box(
+                                                    modifier = Modifier
+                                                        .background(
+                                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                                            shape = RoundedCornerShape(4.dp)
+                                                        )
+                                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                                ) {
+                                                    Text("DEFAULT", fontSize = 8.sp, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                                                }
+                                            }
+                                        }
+                                        Text(
+                                            text = addr.fullAddress,
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    
+                                    // Make Default button (star/favorite icon)
+                                    IconButton(
+                                        onClick = { viewModel.makeAddressDefault(addr.id) }
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Star,
+                                            contentDescription = "Set Default",
+                                            tint = if (isDefault) Color(0xFFFFD54F) else Color.Gray.copy(alpha = 0.4f)
+                                        )
+                                    }
+                                    
+                                    // Delete button
+                                    IconButton(
+                                        onClick = { viewModel.deleteAddress(addr.id) }
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Delete,
+                                            contentDescription = "Delete Address",
+                                            tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                Button(
+                    onClick = onAddNewAddress,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Filled.Add, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Add New Address")
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close")
+            }
+        },
+        shape = RoundedCornerShape(20.dp)
+    )
 }

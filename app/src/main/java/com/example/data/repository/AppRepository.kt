@@ -2,6 +2,7 @@ package com.example.data.repository
 
 import android.content.Context
 import android.util.Log
+import com.example.utils.NotificationHelper
 import androidx.room.Room
 import com.example.data.api.GeminiClient
 import com.example.data.local.AppDatabase
@@ -553,6 +554,7 @@ class AppRepository(private val context: Context) {
         repositoryScope.launch {
             var isTracking = true
             var attempts = 0
+            var lastStatus = ""
             while (isTracking && attempts < 30) {
                 delay(4000)
                 attempts++
@@ -561,6 +563,14 @@ class AppRepository(private val context: Context) {
                     if (response.isSuccessful && response.body()?.success == true) {
                         val updatedOrder = response.body()?.data
                         if (updatedOrder != null) {
+                            if (updatedOrder.status != lastStatus) {
+                                lastStatus = updatedOrder.status
+                                NotificationHelper.showNotification(
+                                    context,
+                                    "Order Updates",
+                                    "Order status is now: ${updatedOrder.status}"
+                                )
+                            }
                             dao.updateOrderStatus(localOrderId, updatedOrder.status)
                             dao.updateDriverLocation(localOrderId, updatedOrder.driverLat, updatedOrder.driverLng)
                             Log.d("AppRepository", "Order track sync: status=${updatedOrder.status}, driverLat=${updatedOrder.driverLat}, driverLng=${updatedOrder.driverLng}")
@@ -588,94 +598,10 @@ class AppRepository(private val context: Context) {
     }
 
     private fun simulateOrderProgress(orderId: Int) {
-        repositoryScope.launch {
-            delay(4000)
-            dao.updateOrderStatus(orderId, "Accepted")
-
-            delay(5000)
-            dao.updateOrderStatus(orderId, "Preparing")
-
-            delay(7000)
-            dao.updateOrderStatus(orderId, "OutForDelivery")
-
-            val riderNames = listOf("Alex Rider", "Jordan Transporter", "Sam Courier", "Taylor Direct")
-            riderNames.random()
-
-            val order = dao.getOrderById(orderId)
-            if (order != null) {
-                val startLat = order.restaurantLat
-                val startLng = order.restaurantLng
-                val endLat = order.customerLat
-                val endLng = order.customerLng
-
-                // Fetch real road coordinates using the OSRM endpoint
-                val osrmRoutePoints = try {
-                    val client = okhttp3.OkHttpClient.Builder()
-                        .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-                        .readTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-                        .build()
-                    val url = "https://router.project-osrm.org/route/v1/driving/$startLng,$startLat;$endLng,$endLat?overview=full&geometries=geojson"
-                    val request = okhttp3.Request.Builder().url(url).build()
-                    val response = client.newCall(request).execute()
-                    val body = response.body?.string() ?: ""
-                    val json = JSONObject(body)
-                    val routes = json.optJSONArray("routes")
-                    val geometry = routes?.optJSONObject(0)?.optJSONObject("geometry")
-                    val coords = geometry?.optJSONArray("coordinates")
-                    val points = mutableListOf<Pair<Double, Double>>()
-                    if (coords != null) {
-                        for (idx in 0 until coords.length()) {
-                            val pair = coords.getJSONArray(idx)
-                            points.add(Pair(pair.getDouble(1), pair.getDouble(0))) // (lat, lng)
-                        }
-                    }
-                    points
-                } catch (e: Exception) {
-                    Log.e("SimulatorOSRM", "Failed to fetch OSRM route for simulation: ${e.message}")
-                    emptyList<Pair<Double, Double>>()
-                }
-
-                if (osrmRoutePoints.isNotEmpty()) {
-                    // Subsample to max 15 steps to keep simulation duration reasonable
-                    val maxSteps = 15
-                    val stepSize = Math.max(1, osrmRoutePoints.size / maxSteps)
-                    val sampledPoints = mutableListOf<Pair<Double, Double>>()
-                    for (idx in 0 until osrmRoutePoints.size step stepSize) {
-                        sampledPoints.add(osrmRoutePoints[idx])
-                    }
-                    // Ensure the last point is always the destination
-                    if (sampledPoints.lastOrNull() != osrmRoutePoints.last()) {
-                        sampledPoints.add(osrmRoutePoints.last())
-                    }
-
-                    for (point in sampledPoints) {
-                        delay(2500)
-                        dao.updateDriverLocation(orderId, point.first, point.second)
-                    }
-                } else {
-                    // Fallback to straight line if OSRM fails
-                    val steps = 15
-                    for (i in 1..steps) {
-                        val fraction = i.toDouble() / steps
-                        val currentLat = startLat + (endLat - startLat) * fraction
-                        val currentLng = startLng + (endLng - startLng) * fraction
-                        delay(2500)
-                        dao.updateDriverLocation(orderId, currentLat, currentLng)
-                    }
-                }
-            }
-
-            dao.updateOrderStatus(orderId, "Delivered")
-
-            dao.insertWalletTransaction(
-                WalletTransactionEntity(
-                    type = "Cashback",
-                    amount = 1.00,
-                    description = "10% BiteCraft standard order cashback!",
-                    timestamp = System.currentTimeMillis()
-                )
-            )
-        }
+        val workRequest = androidx.work.OneTimeWorkRequestBuilder<com.example.utils.OrderSimulationWorker>()
+            .setInputData(androidx.work.workDataOf("order_id" to orderId))
+            .build()
+        androidx.work.WorkManager.getInstance(context).enqueue(workRequest)
     }
 
     suspend fun addPromoTextReview(orderId: Int, rating: Float, reviewText: String) = withContext(Dispatchers.IO) {
@@ -901,6 +827,38 @@ class AppRepository(private val context: Context) {
                 Log.w("AppRepository", "Failed to sync address to remote Supabase: ${e.message}")
             }
         }
+    }
+
+    suspend fun setDefaultAddress(userId: Int, addressId: Int) = withContext(Dispatchers.IO) {
+        dao.clearDefaultAddress(userId)
+        dao.setDefaultAddress(addressId)
+        
+        val user = dao.getUserById(userId) ?: dao.getCurrentUser()
+        if (user != null) {
+            dao.updateDefaultAddress(user.phone, addressId)
+            
+            try {
+                // Fetch the list to find details for sync
+                val list = dao.getSavedAddresses(userId).first()
+                val addr = list.find { it.id == addressId }
+                if (addr != null) {
+                    apiService.updateUserLocation(
+                        com.example.data.api.LocationUpdateRequest(
+                            userId = user.phone,
+                            lat = addr.latitude,
+                            lng = addr.longitude,
+                            address = addr.fullAddress
+                        )
+                    )
+                }
+            } catch (e: Exception) {
+                Log.w("AppRepository", "Failed to sync default address to remote database: ${e.message}")
+            }
+        }
+    }
+
+    suspend fun deleteAddress(addressId: Int) = withContext(Dispatchers.IO) {
+        dao.deleteAddress(addressId)
     }
 
     // --- Sync Helpers ---
