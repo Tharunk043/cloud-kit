@@ -855,6 +855,15 @@ fun ExploreView(
                             }
                             .padding(12.dp)
                     ) {
+                        Image(
+                            painter = painterResource(id = com.example.R.drawable.ic_category_burger),
+                            contentDescription = "Food Delivery",
+                            modifier = Modifier
+                                .size(74.dp)
+                                .align(Alignment.BottomEnd)
+                                .offset(x = 6.dp, y = 6.dp),
+                            contentScale = ContentScale.Fit
+                        )
                         Column(
                             modifier = Modifier.fillMaxSize(),
                             verticalArrangement = Arrangement.SpaceBetween
@@ -868,18 +877,7 @@ fun ExploreView(
                                 Text("CRAVING", color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Bold)
                             }
                             Text("Food\nDelivery", fontWeight = FontWeight.Black, fontSize = 15.sp, lineHeight = 18.sp, color = Color(0xFF5D4037))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.Bottom
-                            ) {
-                                Text("UP TO 50% OFF", fontSize = 9.sp, color = Color(0xFFFC8019), fontWeight = FontWeight.Black)
-                                Image(
-                                    painter = painterResource(id = com.example.R.drawable.ic_category_burger),
-                                    contentDescription = "Food Delivery",
-                                    modifier = Modifier.size(48.dp)
-                                )
-                            }
+                            Text("UP TO 50% OFF", fontSize = 9.sp, color = Color(0xFFFC8019), fontWeight = FontWeight.Black)
                         }
                     }
 
@@ -900,6 +898,15 @@ fun ExploreView(
                             }
                             .padding(12.dp)
                     ) {
+                        Image(
+                            painter = painterResource(id = com.example.R.drawable.ic_service_instamart),
+                            contentDescription = "Instamart",
+                            modifier = Modifier
+                                .size(74.dp)
+                                .align(Alignment.BottomEnd)
+                                .offset(x = 6.dp, y = 6.dp),
+                            contentScale = ContentScale.Fit
+                        )
                         Column(
                             modifier = Modifier.fillMaxSize(),
                             verticalArrangement = Arrangement.SpaceBetween
@@ -913,18 +920,7 @@ fun ExploreView(
                                 Text("10 MINS", color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Bold)
                             }
                             Text("Instamart\nGroceries", fontWeight = FontWeight.Black, fontSize = 15.sp, lineHeight = 18.sp, color = Color(0xFF1B5E20))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.Bottom
-                            ) {
-                                Text("FRESH ITEMS", fontSize = 9.sp, color = Color(0xFF2E7D32), fontWeight = FontWeight.Black)
-                                Image(
-                                    painter = painterResource(id = com.example.R.drawable.ic_service_instamart),
-                                    contentDescription = "Instamart",
-                                    modifier = Modifier.size(48.dp)
-                                )
-                            }
+                            Text("FRESH ITEMS", fontSize = 9.sp, color = Color(0xFF2E7D32), fontWeight = FontWeight.Black)
                         }
                     }
                 }
@@ -952,6 +948,15 @@ fun ExploreView(
                             }
                             .padding(12.dp)
                     ) {
+                        Image(
+                            painter = painterResource(id = com.example.R.drawable.ic_service_dineout),
+                            contentDescription = "Dineout",
+                            modifier = Modifier
+                                .size(74.dp)
+                                .align(Alignment.BottomEnd)
+                                .offset(x = 6.dp, y = 6.dp),
+                            contentScale = ContentScale.Fit
+                        )
                         Column(
                             modifier = Modifier.fillMaxSize(),
                             verticalArrangement = Arrangement.SpaceBetween
@@ -965,18 +970,7 @@ fun ExploreView(
                                 Text("RESERVE", color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Bold)
                             }
                             Text("Dineout\nTables", fontWeight = FontWeight.Black, fontSize = 15.sp, lineHeight = 18.sp, color = Color(0xFF0D47A1))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.Bottom
-                            ) {
-                                Text("FLAT 30% OFF", fontSize = 9.sp, color = Color(0xFF1E88E5), fontWeight = FontWeight.Black)
-                                Image(
-                                    painter = painterResource(id = com.example.R.drawable.ic_service_dineout),
-                                    contentDescription = "Dineout",
-                                    modifier = Modifier.size(48.dp)
-                                )
-                            }
+                            Text("FLAT 30% OFF", fontSize = 9.sp, color = Color(0xFF1E88E5), fontWeight = FontWeight.Black)
                         }
                     }
 
@@ -997,6 +991,15 @@ fun ExploreView(
                             }
                             .padding(12.dp)
                     ) {
+                        Image(
+                            painter = painterResource(id = com.example.R.drawable.ic_service_genie),
+                            contentDescription = "Genie Courier",
+                            modifier = Modifier
+                                .size(74.dp)
+                                .align(Alignment.BottomEnd)
+                                .offset(x = 6.dp, y = 6.dp),
+                            contentScale = ContentScale.Fit
+                        )
                         Column(
                             modifier = Modifier.fillMaxSize(),
                             verticalArrangement = Arrangement.SpaceBetween
@@ -1010,18 +1013,7 @@ fun ExploreView(
                                 Text("ANYTHING", color = Color.White, fontSize = 8.sp, fontWeight = FontWeight.Bold)
                             }
                             Text("Genie\nCourier", fontWeight = FontWeight.Black, fontSize = 15.sp, lineHeight = 18.sp, color = Color(0xFF4A148C))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.Bottom
-                            ) {
-                                Text("SEND PARCEL", fontSize = 9.sp, color = Color(0xFF8E24AA), fontWeight = FontWeight.Black)
-                                Image(
-                                    painter = painterResource(id = com.example.R.drawable.ic_service_genie),
-                                    contentDescription = "Genie Courier",
-                                    modifier = Modifier.size(48.dp)
-                                )
-                            }
+                            Text("SEND PARCEL", fontSize = 9.sp, color = Color(0xFF8E24AA), fontWeight = FontWeight.Black)
                         }
                     }
                 }
@@ -1127,24 +1119,28 @@ fun ExploreView(
                                 }
                                 .testTag("mind_category_${title.lowercase()}")
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(76.dp)
-                                    .clip(CircleShape)
-                                    .background(if (isSelected) parsedColor.copy(alpha = 0.2f) else Color.Transparent)
-                                    .border(
-                                        width = if (isSelected) 2.dp else 0.dp,
-                                        color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
-                                        shape = CircleShape
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Image(
-                                    painter = painterResource(id = drawableId),
-                                    contentDescription = title,
-                                    modifier = Modifier.size(64.dp),
-                                    contentScale = ContentScale.Fit
+                            Card(
+                                modifier = Modifier.size(76.dp),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.White
+                                ),
+                                border = androidx.compose.foundation.BorderStroke(
+                                    width = if (isSelected) 2.dp else 1.dp,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else Color(0xFFEEEEEE)
                                 )
+                            ) {
+                                Box(
+                                    modifier = Modifier.fillMaxSize(),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Image(
+                                        painter = painterResource(id = drawableId),
+                                        contentDescription = title,
+                                        modifier = Modifier.size(58.dp),
+                                        contentScale = ContentScale.Fit
+                                    )
+                                }
                             }
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
