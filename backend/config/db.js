@@ -183,9 +183,36 @@ const initDB = async () => {
         `, row);
       }
       console.log(`Successfully seeded ${seedData.length} restaurants in Supabase PostgreSQL.`);
-    } else {
       console.log(`Restaurants table already contains data (${count} records). Skipping seeding.`);
     }
+
+    // 6. Create performance indexes
+    console.log('Verifying performance indexes in database...');
+    // Enable pg_trgm extension for fast ILIKE text search
+    await client.query('CREATE EXTENSION IF NOT EXISTS pg_trgm;');
+    
+    // GIN Trigram indexes for restaurants
+    await client.query('CREATE INDEX IF NOT EXISTS restaurants_cuisine_trgm_idx ON restaurants USING gin (cuisine gin_trgm_ops);');
+    await client.query('CREATE INDEX IF NOT EXISTS restaurants_name_trgm_idx ON restaurants USING gin (name gin_trgm_ops);');
+    await client.query('CREATE INDEX IF NOT EXISTS restaurants_description_trgm_idx ON restaurants USING gin (description gin_trgm_ops);');
+    
+    // B-Tree index on rating descending
+    await client.query('CREATE INDEX IF NOT EXISTS restaurants_rating_idx ON restaurants (rating DESC);');
+    
+    // Functional GiST index on location::geography
+    await client.query('CREATE INDEX IF NOT EXISTS restaurants_location_geog_idx ON restaurants USING GIST ((location::geography));');
+    
+    // Composite indexes for orders (timeline & FK lookup)
+    await client.query('CREATE INDEX IF NOT EXISTS orders_user_timeline_idx ON orders (user_id, created_at DESC);');
+    await client.query('CREATE INDEX IF NOT EXISTS orders_restaurant_id_idx ON orders (restaurant_id);');
+    
+    // Composite index for wallet transactions
+    await client.query('CREATE INDEX IF NOT EXISTS wallet_transactions_user_timestamp_idx ON wallet_transactions (user_id, timestamp DESC);');
+    
+    // Composite index for saved addresses
+    await client.query('CREATE INDEX IF NOT EXISTS saved_addresses_user_lookup_idx ON saved_addresses (user_id, is_default DESC, created_at DESC);');
+    
+    console.log('Database performance indexes verified successfully.');
 
   } catch (error) {
     console.error(`Error during Supabase DB initialization: ${error.message}`);
