@@ -981,10 +981,11 @@ class AppRepository(private val context: Context) {
                     if (data != null) {
                         dao.insertWalletTransaction(
                             WalletTransactionEntity(
-                                type = "Deposit",
-                                amount = amount,
-                                description = "Wallet fund deposit via UPI/Card",
-                                timestamp = System.currentTimeMillis()
+                                type = data.transaction.type,
+                                amount = data.transaction.amount,
+                                description = data.transaction.description,
+                                timestamp = data.transaction.timestamp,
+                                memberName = data.transaction.memberName
                             )
                         )
                         dao.insertUser(user.copy(walletBalance = data.walletBalance))
@@ -995,6 +996,7 @@ class AppRepository(private val context: Context) {
                 Log.w("AppRepository", "Failed to post remote wallet transaction: ${e.message}")
             }
         }
+        // Local fallback for offline/API failure case
         dao.insertWalletTransaction(
             WalletTransactionEntity(
                 type = "Deposit",
@@ -1003,5 +1005,8 @@ class AppRepository(private val context: Context) {
                 timestamp = System.currentTimeMillis()
             )
         )
+        if (user != null) {
+            dao.insertUser(user.copy(walletBalance = user.walletBalance + amount))
+        }
     }
 }

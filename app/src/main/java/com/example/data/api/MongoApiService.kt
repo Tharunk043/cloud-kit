@@ -124,6 +124,12 @@ data class WalletSyncResponse(
 )
 
 @JsonClass(generateAdapter = true)
+data class AddWalletTxResponse(
+    @Json(name = "walletBalance") val walletBalance: Double,
+    @Json(name = "transaction")   val transaction: MongoWalletTransaction
+)
+
+@JsonClass(generateAdapter = true)
 data class AddWalletTxRequest(
     @Json(name = "type")        val type: String,
     @Json(name = "amount")      val amount: Double,
@@ -218,7 +224,7 @@ interface MongoApiService {
     suspend fun addWalletTransaction(
         @Path("phone") phone: String,
         @Body request: AddWalletTxRequest
-    ): Response<ApiResponse<WalletSyncResponse>>
+    ): Response<ApiResponse<AddWalletTxResponse>>
 
     // ── Address Sync
     @GET("api/users/{phone}/addresses")
