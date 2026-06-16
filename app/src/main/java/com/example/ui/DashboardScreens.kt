@@ -1121,7 +1121,7 @@ fun ExploreView(
                         ) {
                             Card(
                                 modifier = Modifier.size(76.dp),
-                                shape = RoundedCornerShape(12.dp),
+                                shape = CircleShape,
                                 colors = CardDefaults.cardColors(
                                     containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else Color.White
                                 ),
