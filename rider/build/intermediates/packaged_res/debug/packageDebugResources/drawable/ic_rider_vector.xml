@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="64dp"
+    android:height="64dp"
+    android:viewportWidth="64"
+    android:viewportHeight="64">
+    <!-- Rider helmet / head -->
+    <path
+        android:fillColor="#FF6D00"
+        android:pathData="M38,8 C40,8 42,10 42,12 C42,14 40,16 38,16 C36,16 34,14 34,12 C34,10 36,8 38,8Z" />
+    <!-- Scooter body / chassis -->
+    <path
+        android:fillColor="#FF6D00"
+        android:pathData="M12,36 C12,30 16,26 22,26 L34,26 L40,20 L50,20 L54,26 L56,26 C58,26 60,28 60,30 L60,36 L12,36Z" />
+    <!-- Rider torso / upper body -->
+    <path
+        android:fillColor="#E65100"
+        android:pathData="M34,16 L32,26 L44,26 L42,16 Z" />
+    <!-- Front wheel (outer) -->
+    <path
+        android:fillColor="#37474F"
+        android:pathData="M50,36 C50,41.5 45.5,46 40,46 C34.5,46 30,41.5 30,36 C30,30.5 34.5,26 40,26 C45.5,26 50,30.5 50,36Z"
+        android:strokeColor="#546E7A"
+        android:strokeWidth="2" />
+    <!-- Front wheel hub -->
+    <path
+        android:fillColor="#607D8B"
+        android:pathData="M44,36 C44,38.2 42.2,40 40,40 C37.8,40 36,38.2 36,36 C36,33.8 37.8,32 40,32 C42.2,32 44,33.8 44,36Z" />
+    <!-- Rear wheel (outer) -->
+    <path
+        android:fillColor="#37474F"
+        android:pathData="M22,36 C22,41.5 17.5,46 12,46 C6.5,46 2,41.5 2,36 C2,30.5 6.5,26 12,26 C17.5,26 22,30.5 22,36Z"
+        android:strokeColor="#546E7A"
+        android:strokeWidth="2" />
+    <!-- Rear wheel hub -->
+    <path
+        android:fillColor="#607D8B"
+        android:pathData="M16,36 C16,38.2 14.2,40 12,40 C9.8,40 8,38.2 8,36 C8,33.8 9.8,32 12,32 C14.2,32 16,33.8 16,36Z" />
+    <!-- Delivery box (side face) -->
+    <path
+        android:fillColor="#FC8019"
+        android:pathData="M44,14 L56,14 L56,22 L44,22 Z" />
+    <!-- Delivery box (top face) -->
+    <path
+        android:fillColor="#FF9800"
+        android:pathData="M44,14 L56,14 L54,12 L42,12 Z" />
+</vector>

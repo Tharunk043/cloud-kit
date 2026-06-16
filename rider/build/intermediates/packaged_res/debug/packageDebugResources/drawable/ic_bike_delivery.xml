@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="64dp"
+    android:height="64dp"
+    android:viewportWidth="64"
+    android:viewportHeight="64">
+
+    <!-- Rear wheel (left side in top-down view) -->
+    <path android:fillColor="#212121"
+        android:pathData="M8,32 m-8,0 a8,8 0 1,0 16,0 a8,8 0 1,0 -16,0Z"/>
+    <path android:fillColor="#616161"
+        android:pathData="M8,32 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0Z"/>
+
+    <!-- Front wheel (right side in top-down view) -->
+    <path android:fillColor="#212121"
+        android:pathData="M56,32 m-8,0 a8,8 0 1,0 16,0 a8,8 0 1,0 -16,0Z"/>
+    <path android:fillColor="#616161"
+        android:pathData="M56,32 m-4,0 a4,4 0 1,0 8,0 a4,4 0 1,0 -8,0Z"/>
+
+    <!-- Bike body / frame -->
+    <path android:fillColor="#FF6D00"
+        android:pathData="M16,26 L48,26 Q52,26 52,32 Q52,38 48,38 L16,38 Q12,38 12,32 Q12,26 16,26Z"/>
+
+    <!-- Engine/center detail -->
+    <path android:fillColor="#E65100"
+        android:pathData="M26,28 L38,28 L38,36 L26,36 Z"/>
+    <path android:fillColor="#FF8F00"
+        android:pathData="M28,30 L36,30 L36,34 L28,34 Z"/>
+
+    <!-- Handlebar (front) -->
+    <path android:fillColor="#424242"
+        android:pathData="M44,24 L50,24 L50,28 L44,28 Z"
+        android:strokeColor="#212121" android:strokeWidth="0.5"/>
+
+    <!-- Seat area -->
+    <path android:fillColor="#BF360C"
+        android:pathData="M20,26 L30,26 L30,38 L20,38 Z"/>
+
+    <!-- Delivery rider (top-down silhouette) -->
+    <path android:fillColor="#FF6D00"
+        android:pathData="M22,18 Q32,14 42,18 L40,26 L24,26 Z"/>
+
+    <!-- Helmet top-down view -->
+    <path android:fillColor="#1A237E"
+        android:pathData="M32,10 m-6,0 a6,6 0 1,0 12,0 a6,6 0 1,0 -12,0Z"/>
+    <path android:fillColor="#283593"
+        android:pathData="M32,10 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0Z"/>
+
+    <!-- Delivery box on back -->
+    <path android:fillColor="#FC8019"
+        android:pathData="M12,27 L20,27 L20,37 L12,37 Z"/>
+    <path android:fillColor="#FF9800"
+        android:pathData="M13,28 L19,28 L19,36 L13,36 Z"/>
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M14,30 L18,30 L18,31 L14,31 Z"
+        android:alpha="0.6"/>
+</vector>
