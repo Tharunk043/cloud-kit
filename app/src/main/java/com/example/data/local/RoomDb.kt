@@ -88,7 +88,8 @@ data class OrderEntity(
     val restaurantLng: Double = 80.6480,
     val ratingGiven: Float, // 0 if not rated
     val reviewText: String,
-    val reviewSentiment: String // Neutral, Positive, Negative, Mixed
+    val reviewSentiment: String, // Neutral, Positive, Negative, Mixed
+    val remoteId: String = ""
 )
 
 @Entity(tableName = "wallet_transactions", indices = [
@@ -165,7 +166,8 @@ data class UserEntity(
     val isGoldMember: Boolean = false,
     val walletBalance: Double = 0.0,
     val createdAt: Long = System.currentTimeMillis(),
-    val lastLoginAt: Long = System.currentTimeMillis()
+    val lastLoginAt: Long = System.currentTimeMillis(),
+    val role: String = "Customer"
 )
 
 // --- Saved Delivery Address Entity ---
@@ -270,6 +272,12 @@ interface PlatformDao {
 
     @Query("UPDATE orders SET driverLat = :lat, driverLng = :lng WHERE id = :id")
     suspend fun updateDriverLocation(id: Int, lat: Double, lng: Double)
+
+    @Query("UPDATE orders SET status = :status, driverName = :driverName, driverPhone = :driverPhone, driverLat = :driverLat, driverLng = :driverLng WHERE id = :id")
+    suspend fun updateOrderDriverAndStatus(id: Int, status: String, driverName: String, driverPhone: String, driverLat: Double, driverLng: Double)
+
+    @Query("SELECT * FROM orders WHERE remoteId = :remoteId LIMIT 1")
+    suspend fun getOrderByRemoteId(remoteId: String): OrderEntity?
 
     @Query("UPDATE orders SET ratingGiven = :rating, reviewText = :review, reviewSentiment = :sentiment WHERE id = :id")
     suspend fun submitOrderReview(id: Int, rating: Float, review: String, sentiment: String)
@@ -413,7 +421,7 @@ interface PlatformDao {
         SavedAddressEntity::class,
         CategoryEntity::class
     ],
-    version = 6,
+    version = 8,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

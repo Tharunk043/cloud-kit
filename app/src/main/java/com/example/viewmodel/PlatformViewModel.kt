@@ -1,6 +1,7 @@
 package com.example.viewmodel
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.api.GeminiClient
@@ -83,45 +84,7 @@ class PlatformViewModel(application: Application) : AndroidViewModel(application
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    init {
-        viewModelScope.launch {
-            // Load default address locally
-            currentUserFlow.collect { user ->
-                if (user != null) {
-                    repository.dao.getDefaultAddress(user.id)?.let {
-                        userAddress.value = it.fullAddress
-                    }
-                }
-            }
-        }
 
-        viewModelScope.launch {
-            // Restore active order locally on startup
-            try {
-                val activeOrder = repository.orders.first().find {
-                    it.status == "Placed" || it.status == "Accepted" || it.status == "Preparing" || it.status == "OutForDelivery"
-                }
-                if (activeOrder != null) {
-                    activeOrderId.value = activeOrder.id
-                }
-            } catch (e: Exception) {
-                // Ignore startup recovery errors
-            }
-
-            // Sync profile & address from remote in the background
-            try {
-                val localUser = repository.dao.getCurrentUser()
-                if (localUser != null) {
-                    val syncedUser = repository.loginOrCreateUser(localUser.phone, localUser.name)
-                    repository.dao.getDefaultAddress(syncedUser.id)?.let {
-                        userAddress.value = it.fullAddress
-                    }
-                }
-            } catch (e: Exception) {
-                // Ignore background sync errors when offline
-            }
-        }
-    }
 
     val deviceLatitude = MutableStateFlow<Double?>(null)
     val deviceLongitude = MutableStateFlow<Double?>(null)
@@ -228,6 +191,47 @@ class PlatformViewModel(application: Application) : AndroidViewModel(application
     val totalFamilySpend = familyMembers.map { members ->
         members.sumOf { it.monthlySpent }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0.0)
+
+    init {
+        startCustomerActiveOrderSync()
+        viewModelScope.launch {
+            // Load default address locally
+            currentUserFlow.collect { user ->
+                if (user != null) {
+                    repository.dao.getDefaultAddress(user.id)?.let {
+                        userAddress.value = it.fullAddress
+                    }
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            // Restore active order locally on startup
+            try {
+                val activeOrder = repository.orders.first().find {
+                    it.status == "Placed" || it.status == "Accepted" || it.status == "Preparing" || it.status == "OutForDelivery"
+                }
+                if (activeOrder != null) {
+                    activeOrderId.value = activeOrder.id
+                }
+            } catch (e: Exception) {
+                // Ignore startup recovery errors
+            }
+
+            // Sync profile & address from remote in the background
+            try {
+                val localUser = repository.dao.getCurrentUser()
+                if (localUser != null) {
+                    val syncedUser = repository.loginOrCreateUser(localUser.phone, localUser.name, role = currentRole.value)
+                    repository.dao.getDefaultAddress(syncedUser.id)?.let {
+                        userAddress.value = it.fullAddress
+                    }
+                }
+            } catch (e: Exception) {
+                // Ignore background sync errors when offline
+            }
+        }
+    }
 
     // On-the-fly fetching for specific restaurants and dishes
     fun getDishesForSelectedRestaurant(): StateFlow<List<DishEntity>> {
@@ -416,6 +420,67 @@ class PlatformViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    // Remote Connected Actions
+    private var kitchenSyncJob: kotlinx.coroutines.Job? = null
+    fun startKitchenSyncing() {
+        if (kitchenSyncJob != null) return
+        kitchenSyncJob = viewModelScope.launch {
+            while (true) {
+                repository.fetchRemoteOrders()
+                kotlinx.coroutines.delay(3000)
+            }
+        }
+    }
+
+    private var riderSyncJob: kotlinx.coroutines.Job? = null
+    fun startRiderSyncing() {
+        if (riderSyncJob != null) return
+        riderSyncJob = viewModelScope.launch {
+            while (true) {
+                repository.fetchRemoteOrders()
+                kotlinx.coroutines.delay(3000)
+            }
+        }
+    }
+
+    fun updateOrderStatusRemote(orderId: String, localId: Int, status: String, lat: Double? = null, lng: Double? = null) {
+        viewModelScope.launch {
+            repository.updateOrderRemoteStatus(orderId, localId, status, lat, lng)
+        }
+    }
+
+    fun acceptRiderJob(orderId: String, localId: Int, driverName: String, driverPhone: String, driverLat: Double, driverLng: Double) {
+        viewModelScope.launch {
+            repository.acceptRiderOnRemote(orderId, localId, driverName, driverPhone, driverLat, driverLng)
+        }
+    }
+
+    private val activeLocationSimulationJobs = java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Job>()
+
+    fun startRiderLocationSimulation(orderId: String, localId: Int, restLat: Double, restLng: Double, custLat: Double, custLng: Double) {
+        if (activeLocationSimulationJobs.containsKey(orderId)) return
+        val job = viewModelScope.launch {
+            var currentLat = restLat
+            var currentLng = restLng
+            val steps = 15
+            for (i in 1..steps) {
+                kotlinx.coroutines.delay(3000)
+                val faction = i.toDouble() / steps.toDouble()
+                currentLat = restLat + (custLat - restLat) * faction
+                currentLng = restLng + (custLng - restLng) * faction
+                
+                val status = if (i == steps) "Delivered" else "OutForDelivery"
+                repository.updateOrderRemoteStatus(orderId, localId, status, currentLat, currentLng)
+                
+                if (status == "Delivered") {
+                    break
+                }
+            }
+            activeLocationSimulationJobs.remove(orderId)
+        }
+        activeLocationSimulationJobs[orderId] = job
+    }
+
     // --- Family Management ---
     fun addFamilyMember(name: String, email: String, spendingLimit: Double, avatarColor: Long) {
         viewModelScope.launch {
@@ -487,7 +552,7 @@ class PlatformViewModel(application: Application) : AndroidViewModel(application
     // --- Auth Functions ---
     fun loginUser(phone: String, name: String) {
         viewModelScope.launch {
-            val user = repository.loginOrCreateUser(phone, name)
+            val user = repository.loginOrCreateUser(phone, name, role = currentRole.value)
             // Set default address if it exists
             repository.dao.getDefaultAddress(user.id)?.let {
                 userAddress.value = it.fullAddress
@@ -542,5 +607,155 @@ class PlatformViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             repository.deleteAddress(addressId)
         }
+    }
+
+    private var fusedLocationClient: com.google.android.gms.location.FusedLocationProviderClient? = null
+    private var locationCallback: com.google.android.gms.location.LocationCallback? = null
+
+    fun startActualLocationTracking() {
+        if (fusedLocationClient != null) return
+        val context = getApplication<Application>()
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.ACCESS_FINE_LOCATION
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED &&
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.ACCESS_COARSE_LOCATION
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            Log.d("PlatformViewModel", "Location permissions not granted, skipping active tracking")
+            return
+        }
+
+        try {
+            val client = com.google.android.gms.location.LocationServices.getFusedLocationProviderClient(context)
+            fusedLocationClient = client
+
+            val locationRequest = com.google.android.gms.location.LocationRequest.Builder(
+                com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY,
+                3000L
+            ).apply {
+                setMinUpdateIntervalMillis(1500L)
+            }.build()
+
+            val callback = object : com.google.android.gms.location.LocationCallback() {
+                override fun onLocationResult(locationResult: com.google.android.gms.location.LocationResult) {
+                    val location = locationResult.lastLocation ?: return
+                    updateDeviceLocation(location.latitude, location.longitude)
+                    Log.d("PlatformViewModel", "Real-time location updated: ${location.latitude}, ${location.longitude}")
+                    
+                    viewModelScope.launch {
+                        try {
+                            val activeJobs = repository.orders.first().filter {
+                                it.driverName == currentUserName.value && it.status == "OutForDelivery"
+                            }
+                            for (job in activeJobs) {
+                                repository.updateOrderRemoteStatus(
+                                    job.remoteId,
+                                    job.id,
+                                    "OutForDelivery",
+                                    location.latitude,
+                                    location.longitude
+                                )
+                                Log.d("PlatformViewModel", "Sent actual location for Order #${job.id} to remote server: ${location.latitude}, ${location.longitude}")
+                            }
+                        } catch (e: Exception) {
+                            Log.e("PlatformViewModel", "Error posting live location updates: ${e.message}")
+                        }
+                    }
+                }
+            }
+            locationCallback = callback
+            client.requestLocationUpdates(locationRequest, callback, android.os.Looper.getMainLooper())
+            Log.d("PlatformViewModel", "Location updates requested successfully")
+        } catch (e: SecurityException) {
+            Log.e("PlatformViewModel", "SecurityException requesting location updates: ${e.message}")
+        } catch (e: Exception) {
+            Log.e("PlatformViewModel", "Exception starting location tracking: ${e.message}")
+        }
+    }
+
+    fun stopActualLocationTracking() {
+        try {
+            val client = fusedLocationClient
+            val callback = locationCallback
+            if (client != null && callback != null) {
+                client.removeLocationUpdates(callback)
+            }
+        } catch (e: Exception) {
+            Log.e("PlatformViewModel", "Error stopping location updates: ${e.message}")
+        }
+        fusedLocationClient = null
+        locationCallback = null
+    }
+
+    private var customerActiveOrderSyncJob: kotlinx.coroutines.Job? = null
+
+    fun startCustomerActiveOrderSync() {
+        if (customerActiveOrderSyncJob != null) return
+        customerActiveOrderSyncJob = viewModelScope.launch {
+            while (true) {
+                val orderId = activeOrderId.value
+                if (orderId != null) {
+                    try {
+                        val localOrder = repository.dao.getOrderById(orderId)
+                        val remoteId = localOrder?.remoteId
+                        if (remoteId != null) {
+                            val response = repository.apiService.trackOrder(remoteId)
+                            if (response.isSuccessful && response.body()?.success == true) {
+                                val updated = response.body()?.data
+                                if (updated != null) {
+                                    repository.dao.updateOrderDriverAndStatus(
+                                        orderId,
+                                        updated.status,
+                                        updated.driverName,
+                                        updated.driverPhone,
+                                        updated.driverLat,
+                                        updated.driverLng
+                                    )
+                                    // Trigger notification if status changed reactively
+                                    if (localOrder.status != updated.status) {
+                                        val statusMsg = when (updated.status) {
+                                            "Accepted" -> "Your order has been accepted by the restaurant! 🍳"
+                                            "Preparing" -> "The chef is preparing your delicious meal! 🍜"
+                                            "Confirmed" -> "A delivery partner has accepted your order! 🛵"
+                                            "OutForDelivery" -> "Your order is Out for Delivery! Keep track of the rider on the map."
+                                            "Delivered" -> "Delivered! Enjoy your meal 🍽️"
+                                            else -> "Order status is now: ${updated.status}"
+                                        }
+                                        com.example.utils.NotificationHelper.showNotification(
+                                            getApplication(),
+                                            "BiteCraft Order Update",
+                                            statusMsg
+                                        )
+                                    }
+                                    // Stop tracking if completed/cancelled
+                                    if (updated.status == "Delivered" || updated.status == "Cancelled") {
+                                        activeOrderId.value = null
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e("PlatformViewModel", "Error syncing active order for customer: ${e.message}")
+                    }
+                }
+                kotlinx.coroutines.delay(3000)
+            }
+        }
+    }
+
+    fun stopCustomerActiveOrderSync() {
+        customerActiveOrderSyncJob?.cancel()
+        customerActiveOrderSyncJob = null
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        stopActualLocationTracking()
+        stopCustomerActiveOrderSync()
+        kitchenSyncJob?.cancel()
+        riderSyncJob?.cancel()
     }
 }

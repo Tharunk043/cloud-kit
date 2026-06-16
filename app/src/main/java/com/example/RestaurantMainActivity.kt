@@ -21,6 +21,7 @@ class RestaurantMainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             val viewModel: PlatformViewModel = viewModel()
+            viewModel.switchRole("Restaurant")
             val isDark by viewModel.isDarkTheme.collectAsState()
             MyApplicationTheme(darkTheme = isDark) {
                 Surface(

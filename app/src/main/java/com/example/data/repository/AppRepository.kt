@@ -505,8 +505,8 @@ class AppRepository(private val context: Context) {
                         paymentMethod = paymentMethod,
                         deliveryAddress = address,
                         timestamp = mongoOrder.createdAt,
-                        driverName = "Dash Rider",
-                        driverPhone = "+1 415-555-5382",
+                        driverName = mongoOrder.driverName,
+                        driverPhone = mongoOrder.driverPhone,
                         driverLat = mongoOrder.driverLat,
                         driverLng = mongoOrder.driverLng,
                         customerLat = resolvedCustomerLat,
@@ -515,7 +515,8 @@ class AppRepository(private val context: Context) {
                         restaurantLng = resolvedRestaurantLng,
                         ratingGiven = 0f,
                         reviewText = "",
-                        reviewSentiment = "Neutral"
+                        reviewSentiment = "Neutral",
+                        remoteId = mongoOrder.id
                     )
                     localOrderId = dao.insertOrder(newOrder).toInt()
                     mongoOrderIdMap[localOrderId] = mongoOrder.id
@@ -582,9 +583,15 @@ class AppRepository(private val context: Context) {
                                     "Order status is now: ${updatedOrder.status}"
                                 )
                             }
-                            dao.updateOrderStatus(localOrderId, updatedOrder.status)
-                            dao.updateDriverLocation(localOrderId, updatedOrder.driverLat, updatedOrder.driverLng)
-                            Log.d("AppRepository", "Order track sync: status=${updatedOrder.status}, driverLat=${updatedOrder.driverLat}, driverLng=${updatedOrder.driverLng}")
+                             dao.updateOrderDriverAndStatus(
+                                 localOrderId,
+                                 updatedOrder.status,
+                                 updatedOrder.driverName,
+                                 updatedOrder.driverPhone,
+                                 updatedOrder.driverLat,
+                                 updatedOrder.driverLng
+                             )
+                             Log.d("AppRepository", "Order track sync: status=${updatedOrder.status}, driver=${updatedOrder.driverName}, driverLat=${updatedOrder.driverLat}, driverLng=${updatedOrder.driverLng}")
                             
                             if (updatedOrder.status == "Delivered" || updatedOrder.status == "Cancelled") {
                                 isTracking = false
@@ -743,13 +750,13 @@ class AppRepository(private val context: Context) {
     }
 
     // --- User Authentication ---
-    suspend fun loginOrCreateUser(phone: String, name: String, email: String = ""): UserEntity = withContext(Dispatchers.IO) {
+    suspend fun loginOrCreateUser(phone: String, name: String, email: String = "", role: String = "Customer"): UserEntity = withContext(Dispatchers.IO) {
         val existing = dao.getUserByPhone(phone)
         val token = java.util.UUID.randomUUID().toString()
 
         var remoteUser: com.example.data.api.MongoUser? = null
         try {
-            val response = apiService.syncUserProfile(com.example.data.api.SyncUserRequest(phone, name, email.ifEmpty { existing?.email ?: "" }))
+            val response = apiService.syncUserProfile(com.example.data.api.SyncUserRequest(phone, name, email.ifEmpty { existing?.email ?: "" }, role))
             if (response.isSuccessful && response.body()?.success == true) {
                 remoteUser = response.body()?.data
                 Log.d("AppRepository", "Synced profile with remote Supabase DB successfully: balance = ${remoteUser?.walletBalance}")
@@ -764,7 +771,8 @@ class AppRepository(private val context: Context) {
                 name = remoteUser?.name ?: name,
                 email = remoteUser?.email ?: email.ifEmpty { existing.email },
                 walletBalance = remoteUser?.walletBalance ?: existing.walletBalance,
-                lastLoginAt = System.currentTimeMillis()
+                lastLoginAt = System.currentTimeMillis(),
+                role = remoteUser?.role ?: existing.role
             )
             dao.insertUser(updatedUser)
             
@@ -782,7 +790,8 @@ class AppRepository(private val context: Context) {
                 isVerified = true,
                 walletBalance = remoteUser?.walletBalance ?: 100.0,
                 createdAt = remoteUser?.createdAt ?: System.currentTimeMillis(),
-                lastLoginAt = System.currentTimeMillis()
+                lastLoginAt = System.currentTimeMillis(),
+                role = remoteUser?.role ?: role
             )
             val id = dao.insertUser(newUser).toInt()
             val resolved = newUser.copy(id = id)
@@ -1006,5 +1015,175 @@ class AppRepository(private val context: Context) {
         if (user != null) {
             dao.insertUser(user.copy(walletBalance = user.walletBalance + amount))
         }
+    }
+
+    suspend fun fetchRemoteOrders(
+        userId: String? = null,
+        restaurantId: String? = null,
+        status: String? = null,
+        unassigned: Boolean? = null
+    ) {
+        try {
+            val response = apiService.getOrders(userId, restaurantId, status, unassigned)
+            if (response.isSuccessful && response.body()?.success == true) {
+                val remoteList = response.body()?.data ?: emptyList()
+                remoteList.forEach { remote ->
+                    val existing = dao.getOrderByRemoteId(remote.id)
+                    val restId = remote.restaurantId.toIntOrNull() ?: 1
+                    val restName = dao.getRestaurantById(restId)?.name ?: "Restaurant #${remote.restaurantId}"
+                    
+                    val itemsSummaryBuilder = StringBuilder()
+                    remote.items.forEachIndexed { index, item ->
+                        if (index > 0) itemsSummaryBuilder.append(", ")
+                        itemsSummaryBuilder.append("${item.quantity}x ${item.name}")
+                    }
+                    val itemsSummary = itemsSummaryBuilder.toString().ifEmpty { "Gourmet items" }
+                    
+                    val itemsDetailJson = try {
+                        val array = org.json.JSONArray()
+                        remote.items.forEach { item ->
+                            val obj = org.json.JSONObject()
+                            obj.put("dishId", item.dishId)
+                            obj.put("name", item.name)
+                            obj.put("quantity", item.quantity)
+                            obj.put("price", item.price)
+                            array.put(obj)
+                        }
+                        array.toString()
+                    } catch (e: Exception) {
+                        "[]"
+                    }
+
+                    if (existing != null) {
+                        val statusChanged = existing.status != remote.status
+                        dao.updateOrderDriverAndStatus(
+                            existing.id,
+                            remote.status,
+                            remote.driverName,
+                            remote.driverPhone,
+                            remote.driverLat,
+                            remote.driverLng
+                        )
+                        
+                        val isRider = context.packageName.contains("rider")
+                        if (isRider && statusChanged && remote.driverName.isEmpty() && (remote.status == "Placed" || remote.status == "Accepted" || remote.status == "Preparing")) {
+                            com.example.utils.NotificationHelper.showNotification(
+                                context,
+                                "Gourmet Dispatch Update",
+                                "Order at $restName is ${remote.status} and available!"
+                            )
+                            com.example.utils.NotificationHelper.playNotificationSound(context)
+                        }
+                    } else {
+                        val newOrder = OrderEntity(
+                            restaurantId = restId,
+                            restaurantName = restName,
+                            status = remote.status,
+                            totalAmount = remote.totalAmount,
+                            itemsSummary = itemsSummary,
+                            itemsDetailJson = itemsDetailJson,
+                            paymentMethod = remote.paymentMethod,
+                            deliveryAddress = remote.deliveryAddress,
+                            timestamp = remote.createdAt,
+                            driverName = remote.driverName,
+                            driverPhone = remote.driverPhone,
+                            driverLat = remote.driverLat,
+                            driverLng = remote.driverLng,
+                            customerLat = remote.customerLat,
+                            customerLng = remote.customerLng,
+                            restaurantLat = remote.restaurantLat,
+                            restaurantLng = remote.restaurantLng,
+                            ratingGiven = remote.ratingGiven,
+                            reviewText = remote.reviewText,
+                            reviewSentiment = remote.reviewSentiment,
+                            remoteId = remote.id
+                        )
+                        dao.insertOrder(newOrder)
+
+                        // Trigger notifications with ring sound if running the Rider app module
+                        val isRider = context.packageName.contains("rider")
+                        if (isRider && remote.driverName.isEmpty() && (remote.status == "Placed" || remote.status == "Accepted" || remote.status == "Preparing")) {
+                            com.example.utils.NotificationHelper.showNotification(
+                                context,
+                                "New Gourmet Dispatch",
+                                "New order available at $restName!"
+                            )
+                            com.example.utils.NotificationHelper.playNotificationSound(context)
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("AppRepository", "Error fetching remote orders: ${e.message}")
+        }
+    }
+
+    suspend fun updateOrderRemoteStatus(
+        orderId: String,
+        localId: Int,
+        status: String,
+        lat: Double? = null,
+        lng: Double? = null
+    ) {
+        try {
+            val request = com.example.data.api.UpdateStatusRequest(status, lat, lng)
+            val response = apiService.updateOrderStatus(orderId, request)
+            if (response.isSuccessful && response.body()?.success == true) {
+                val updated = response.body()?.data
+                if (updated != null) {
+                    dao.updateOrderDriverAndStatus(
+                        localId,
+                        updated.status,
+                        updated.driverName,
+                        updated.driverPhone,
+                        updated.driverLat,
+                        updated.driverLng
+                    )
+                    return
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("AppRepository", "Failed to update status on remote: ${e.message}")
+        }
+        dao.updateOrderStatus(localId, status)
+        if (lat != null && lng != null) {
+            dao.updateDriverLocation(localId, lat, lng)
+        }
+    }
+
+    suspend fun acceptRiderOnRemote(
+        orderId: String,
+        localId: Int,
+        driverName: String,
+        driverPhone: String,
+        driverLat: Double,
+        driverLng: Double
+    ) {
+        try {
+            val request = com.example.data.api.AcceptRiderRequest(
+                driverName = driverName,
+                driverPhone = driverPhone,
+                driverLat = driverLat,
+                driverLng = driverLng
+            )
+            val response = apiService.acceptRider(orderId, request)
+            if (response.isSuccessful && response.body()?.success == true) {
+                val updated = response.body()?.data
+                if (updated != null) {
+                    dao.updateOrderDriverAndStatus(
+                        localId,
+                        updated.status,
+                        updated.driverName.ifEmpty { driverName },
+                        updated.driverPhone.ifEmpty { driverPhone },
+                        updated.driverLat,
+                        updated.driverLng
+                    )
+                    return
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("AppRepository", "Failed to accept rider on remote: ${e.message}")
+        }
+        dao.updateOrderDriverAndStatus(localId, "Confirmed", driverName, driverPhone, driverLat, driverLng)
     }
 }

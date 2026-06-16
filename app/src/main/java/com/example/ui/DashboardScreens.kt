@@ -24,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -3072,6 +3073,66 @@ fun ActiveOrderTrackingView(
             }
         }
 
+        // Rider Details Card
+        item {
+            if (activeOrder.driverName.isEmpty() || activeOrder.driverName == "Dash Rider" && activeOrder.status == "Placed") {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                    shape = RoundedCornerShape(16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp
+                        )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column {
+                            Text("Looking for delivery partner...", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                            Text("Assigning closest rider to pick up your gourmet bite.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            } else {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(40.dp)
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Default.Person, contentDescription = "Rider", tint = MaterialTheme.colorScheme.primary)
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column {
+                                Text(activeOrder.driverName, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text("Delivery Partner • ${activeOrder.driverPhone}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        IconButton(onClick = {}) {
+                            Icon(Icons.Default.PhoneAndroid, contentDescription = "Call Rider", tint = Color(0xFF4CAF50))
+                        }
+                    }
+                }
+            }
+        }
+
         // Live coordinate map drawing
         item {
             val darkThemeFlow by viewModel.isDarkTheme.collectAsState()
@@ -3104,6 +3165,7 @@ fun ActiveOrderTrackingView(
                     restaurantLng = activeOrder.restaurantLng,
                     driverLat = activeOrder.driverLat,
                     driverLng = activeOrder.driverLng,
+                    orderStatus = activeOrder.status,
                     isDarkTheme = darkThemeFlow,
                     getCachedRoute = getCache,
                     cacheRoute = saveCache,
@@ -3136,7 +3198,7 @@ fun ActiveOrderTrackingView(
 
             val etaText = remember(status, distanceKm) {
                 when (status) {
-                    "Placed", "Accepted" -> "20 - 25 mins (Restaurant accepting order)"
+                    "Placed", "Accepted", "Confirmed" -> "20 - 25 mins (Rider assigned & accepting)"
                     "Preparing", "Cooking" -> "15 - 20 mins (Chef preparing your meal)"
                     "OutForDelivery" -> {
                         val etaMinutes = (distanceKm * 2.5).toInt().coerceAtLeast(1)
@@ -3174,7 +3236,7 @@ fun ActiveOrderTrackingView(
                     Spacer(modifier = Modifier.height(12.dp))
                     LinearProgressIndicator(
                         progress = when (status) {
-                            "Placed", "Accepted" -> 0.25f
+                            "Placed", "Accepted", "Confirmed" -> 0.25f
                             "Preparing", "Cooking" -> 0.50f
                             "OutForDelivery" -> 0.75f
                             "Delivered" -> 1.0f
@@ -4084,8 +4146,12 @@ fun GeminiSupportView(viewModel: PlatformViewModel) {
 
 @Composable
 fun KitchenSection(viewModel: PlatformViewModel) {
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        viewModel.startKitchenSyncing()
+    }
+
     val orders by viewModel.orders.collectAsState()
-    val kitchenOrders = orders.filter { it.status == "Placed" || it.status == "Accepted" || it.status == "Preparing" }
+    val kitchenOrders = orders.filter { it.status == "Placed" || it.status == "Accepted" || it.status == "Preparing" || it.status == "Confirmed" }
 
     var selectedSectionState by remember { mutableStateOf("Pending Orders") } // Pending, Menu management, Performance
 
@@ -4149,15 +4215,15 @@ fun KitchenSection(viewModel: PlatformViewModel) {
                                     ) {
                                         if (order.status == "Placed") {
                                             Button(
-                                                onClick = { viewModel.updateOrderStatusByKitchen(order.id, "Accepted") },
+                                                onClick = { viewModel.updateOrderStatusRemote(order.remoteId, order.id, "Accepted") },
                                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50)),
                                                 modifier = Modifier.weight(1f)
                                             ) {
                                                 Text("ACCEPT ORDER")
                                             }
-                                        } else if (order.status == "Accepted") {
+                                        } else if (order.status == "Accepted" || order.status == "Confirmed") {
                                             Button(
-                                                onClick = { viewModel.updateOrderStatusByKitchen(order.id, "Preparing") },
+                                                onClick = { viewModel.updateOrderStatusRemote(order.remoteId, order.id, "Preparing") },
                                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF9800)),
                                                 modifier = Modifier.weight(1f)
                                             ) {
@@ -4165,7 +4231,7 @@ fun KitchenSection(viewModel: PlatformViewModel) {
                                             }
                                         } else if (order.status == "Preparing") {
                                             Button(
-                                                onClick = { viewModel.updateOrderStatusByKitchen(order.id, "OutForDelivery") },
+                                                onClick = { viewModel.updateOrderStatusRemote(order.remoteId, order.id, "OutForDelivery") },
                                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E88E5)),
                                                 modifier = Modifier.weight(1f)
                                             ) {
@@ -4211,10 +4277,39 @@ fun KitchenSection(viewModel: PlatformViewModel) {
 
 @Composable
 fun RiderSection(viewModel: PlatformViewModel) {
-    val orders by viewModel.orders.collectAsState()
-    val outForDeliveryOrders = orders.filter { it.status == "OutForDelivery" }
-
     var availabilityState by remember { mutableStateOf(true) } // On duty, Off duty
+    var selectedTabState by remember { mutableStateOf("Available Jobs") } // Available Jobs, My Deliveries
+
+    androidx.compose.runtime.LaunchedEffect(Unit) {
+        viewModel.startRiderSyncing()
+        viewModel.startActualLocationTracking()
+    }
+
+    androidx.compose.runtime.LaunchedEffect(availabilityState) {
+        if (availabilityState) {
+            viewModel.startActualLocationTracking()
+        } else {
+            viewModel.stopActualLocationTracking()
+        }
+    }
+
+    val orders by viewModel.orders.collectAsState()
+    val currentUserName by viewModel.currentUserName.collectAsState()
+    val currentUserPhone by viewModel.currentUserPhone.collectAsState()
+    
+    val driverName = currentUserName.ifEmpty { "Professional Rider" }
+    val driverPhone = currentUserPhone.ifEmpty { "+1 555-0199" }
+    
+    // Available Jobs: Placed/Accepted/Preparing orders without a driver assigned
+    val availableJobs = orders.filter { 
+        (it.status == "Placed" || it.status == "Accepted" || it.status == "Preparing") && 
+        (it.driverName.isEmpty() || it.driverName == "Dash Rider" || it.driverName == "Professional Rider" && it.status == "Placed") 
+    }
+    
+    // My Jobs: assigned to this driver and not delivered/cancelled yet
+    val myJobs = orders.filter { 
+        it.driverName == driverName && it.status != "Delivered" && it.status != "Cancelled" 
+    }
 
     Column(
         modifier = Modifier
@@ -4227,10 +4322,29 @@ fun RiderSection(viewModel: PlatformViewModel) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Delivery Rider Portal", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, color = MaterialTheme.colorScheme.primary)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(if (availabilityState) "On Duty" else "Off Duty", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                Switch(checked = availabilityState, onCheckedChange = { availabilityState = it })
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Delivery Rider Portal", fontWeight = FontWeight.ExtraBold, fontSize = 20.sp, color = MaterialTheme.colorScheme.primary)
+                Text("Rider: $driverName ($driverPhone)", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(if (availabilityState) "On Duty" else "Off Duty", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    Switch(
+                        checked = availabilityState,
+                        onCheckedChange = { availabilityState = it },
+                        modifier = Modifier.scale(0.8f)
+                    )
+                }
+                IconButton(onClick = { viewModel.logoutUser() }) {
+                    Icon(
+                        imageVector = Icons.Default.Logout,
+                        contentDescription = "Logout",
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                }
             }
         }
 
@@ -4255,30 +4369,166 @@ fun RiderSection(viewModel: PlatformViewModel) {
                 Text("Go 'On Duty' to receive gourmet dispatch notifications!")
             }
         } else {
-            if (outForDeliveryOrders.isEmpty()) {
+            // Tab switch selector
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("Available Jobs", "My Deliveries").forEach { tab ->
+                    val active = selectedTabState == tab
+                    FilterChip(
+                        selected = active,
+                        onClick = { selectedTabState = tab },
+                        label = {
+                            val count = if (tab == "Available Jobs") availableJobs.size else myJobs.size
+                            Text("$tab ($count)", fontWeight = FontWeight.Bold)
+                        }
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            val currentList = if (selectedTabState == "Available Jobs") availableJobs else myJobs
+
+            if (currentList.isEmpty()) {
                 Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    Text("No dispatch orders waiting for rider coordination.")
+                    Text(
+                        if (selectedTabState == "Available Jobs") "No unassigned dispatch orders waiting for rider coordination." 
+                        else "You have no active accepted deliveries at the moment."
+                    )
                 }
             } else {
-                Text("Assigned Transit Orders", fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 8.dp))
                 LazyColumn(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    items(outForDeliveryOrders) { order ->
+                    items(currentList) { order ->
+                        val riderLat = viewModel.deviceLatitude.value
+                        val riderLng = viewModel.deviceLongitude.value
+                        
+                        val distanceToPickupStr = if (riderLat != null && riderLng != null) {
+                            val results = FloatArray(1)
+                            android.location.Location.distanceBetween(riderLat, riderLng, order.restaurantLat, order.restaurantLng, results)
+                            String.format(java.util.Locale.US, "%.1f km", results[0] / 1000.0)
+                        } else {
+                            "Unknown (Enable GPS)"
+                        }
+
+                        val distanceToDeliveryStr = run {
+                            val MathResults = FloatArray(1)
+                            android.location.Location.distanceBetween(order.restaurantLat, order.restaurantLng, order.customerLat, order.customerLng, MathResults)
+                            String.format(java.util.Locale.US, "%.1f km", MathResults[0] / 1000.0)
+                        }
+
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                         ) {
                             Column(modifier = Modifier.padding(16.dp)) {
-                                Text("Delivery Job #${order.id}", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text("Pickup: ${order.restaurantName}", fontWeight = FontWeight.Medium)
-                                Text("Dropoff Client: ${order.deliveryAddress}", fontWeight = FontWeight.Medium)
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Button(
-                                    onClick = { viewModel.updateOrderStatusByKitchen(order.id, "Delivered") },
+                                Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50))
+                                    horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Text("MARK JOB AS COMPLETED")
+                                    Text("Delivery Job #${order.id}", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                    Text(order.status.uppercase(), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.secondary)
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text("Pickup: ${order.restaurantName}", fontWeight = FontWeight.Medium)
+                                Text("Dropoff Client: ${order.deliveryAddress}", fontWeight = FontWeight.Medium, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(16.dp)
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.DirectionsRun,
+                                            contentDescription = "Distance to Pickup",
+                                            tint = MaterialTheme.colorScheme.secondary,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("To Pickup: $distanceToPickupStr", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                    }
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.LocalShipping,
+                                            contentDescription = "Delivery Distance",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("To Client: $distanceToDeliveryStr", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                    }
+                                }
+
+                                Text("Amount Payout: $${String.format(java.util.Locale.US, "%.2f", order.totalAmount)}", fontWeight = FontWeight.Bold, fontSize = 12.sp, color = Color(0xFF4CAF50))
+                                Spacer(modifier = Modifier.height(8.dp))
+                                
+                                if (selectedTabState == "Available Jobs") {
+                                    Button(
+                                        onClick = {
+                                            val currentLat = viewModel.deviceLatitude.value ?: order.restaurantLat
+                                            val currentLng = viewModel.deviceLongitude.value ?: order.restaurantLng
+                                            viewModel.acceptRiderJob(
+                                                orderId = order.remoteId,
+                                                localId = order.id,
+                                                driverName = driverName,
+                                                driverPhone = driverPhone,
+                                                driverLat = currentLat,
+                                                driverLng = currentLng
+                                            )
+                                        },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50))
+                                    ) {
+                                        Text("ACCEPT DELIVERY JOB")
+                                    }
+                                } else {
+                                    if (order.status == "Confirmed" || order.status == "Preparing" || order.status == "Accepted") {
+                                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Button(
+                                                onClick = {
+                                                    viewModel.startRiderLocationSimulation(
+                                                        orderId = order.remoteId,
+                                                        localId = order.id,
+                                                        restLat = order.restaurantLat,
+                                                        restLng = order.restaurantLng,
+                                                        custLat = order.customerLat,
+                                                        custLng = order.customerLng
+                                                    )
+                                                },
+                                                modifier = Modifier.fillMaxWidth(),
+                                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E88E5))
+                                            ) {
+                                                Text("START SIMULATED TRANSIT")
+                                            }
+
+                                            Button(
+                                                onClick = {
+                                                    val currentLat = viewModel.deviceLatitude.value ?: order.restaurantLat
+                                                    val currentLng = viewModel.deviceLongitude.value ?: order.restaurantLng
+                                                    viewModel.updateOrderStatusRemote(
+                                                        orderId = order.remoteId,
+                                                        localId = order.id,
+                                                        status = "OutForDelivery",
+                                                        lat = currentLat,
+                                                        lng = currentLng
+                                                    )
+                                                },
+                                                modifier = Modifier.fillMaxWidth(),
+                                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8E24AA))
+                                            ) {
+                                                Text("START ACTUAL GPS TRANSIT")
+                                            }
+                                        }
+                                    } else if (order.status == "OutForDelivery") {
+                                        Text("Routing coordinates to customer coordinates...", fontSize = 11.sp, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic, modifier = Modifier.padding(bottom = 6.dp))
+                                        Button(
+                                            onClick = {
+                                                viewModel.updateOrderStatusRemote(order.remoteId, order.id, "Delivered")
+                                            },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50))
+                                        ) {
+                                            Text("MARK JOB AS COMPLETED")
+                                        }
+                                    }
                                 }
                             }
                         }

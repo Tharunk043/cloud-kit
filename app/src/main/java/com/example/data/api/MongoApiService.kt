@@ -45,7 +45,24 @@ data class MongoOrder(
     @Json(name = "createdAt")     val createdAt: Long = 0L,
     @Json(name = "ratingGiven")   val ratingGiven: Float = 0.0f,
     @Json(name = "reviewText")    val reviewText: String = "",
-    @Json(name = "reviewSentiment") val reviewSentiment: String = "Neutral"
+    @Json(name = "reviewSentiment") val reviewSentiment: String = "Neutral",
+    @Json(name = "driverName")    val driverName: String = "",
+    @Json(name = "driverPhone")   val driverPhone: String = ""
+)
+
+@JsonClass(generateAdapter = true)
+data class AcceptRiderRequest(
+    @Json(name = "driverName")  val driverName: String,
+    @Json(name = "driverPhone") val driverPhone: String,
+    @Json(name = "driverLat")   val driverLat: Double,
+    @Json(name = "driverLng")   val driverLng: Double
+)
+
+@JsonClass(generateAdapter = true)
+data class UpdateStatusRequest(
+    @Json(name = "status")    val status: String,
+    @Json(name = "driverLat") val driverLat: Double? = null,
+    @Json(name = "driverLng") val driverLng: Double? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -90,7 +107,8 @@ data class LocationUpdateRequest(
 data class SyncUserRequest(
     @Json(name = "phone") val phone: String,
     @Json(name = "name")  val name: String,
-    @Json(name = "email") val email: String = ""
+    @Json(name = "email") val email: String = "",
+    @Json(name = "role")  val role: String = "Customer"
 )
 
 @JsonClass(generateAdapter = true)
@@ -105,7 +123,8 @@ data class MongoUser(
     @Json(name = "isGoldMember")     val isGoldMember: Boolean = false,
     @Json(name = "walletBalance")    val walletBalance: Double = 0.0,
     @Json(name = "createdAt")        val createdAt: Long = 0L,
-    @Json(name = "lastLoginAt")      val lastLoginAt: Long = 0L
+    @Json(name = "lastLoginAt")      val lastLoginAt: Long = 0L,
+    @Json(name = "role")             val role: String = "Customer"
 )
 
 @JsonClass(generateAdapter = true)
@@ -186,6 +205,26 @@ interface MongoApiService {
     suspend fun getUserOrders(
         @Query("userId") userId: String
     ): Response<ApiResponse<List<MongoOrder>>>
+
+    @GET("api/orders")
+    suspend fun getOrders(
+        @Query("userId") userId: String? = null,
+        @Query("restaurantId") restaurantId: String? = null,
+        @Query("status") status: String? = null,
+        @Query("unassigned") unassigned: Boolean? = null
+    ): Response<ApiResponse<List<MongoOrder>>>
+
+    @PUT("api/orders/{id}/status")
+    suspend fun updateOrderStatus(
+        @Path("id") orderId: String,
+        @Body request: UpdateStatusRequest
+    ): Response<ApiResponse<MongoOrder>>
+
+    @PUT("api/orders/{id}/accept-rider")
+    suspend fun acceptRider(
+        @Path("id") orderId: String,
+        @Body request: AcceptRiderRequest
+    ): Response<ApiResponse<MongoOrder>>
 
     @POST("api/orders")
     suspend fun placeOrder(

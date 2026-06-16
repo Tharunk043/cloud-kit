@@ -239,6 +239,7 @@ fun OSMDeliveryMap(
     restaurantLng: Double,
     driverLat: Double,
     driverLng: Double,
+    orderStatus: String,
     isDarkTheme: Boolean,
     getCachedRoute: (Int) -> List<Pair<Double, Double>>?,
     cacheRoute: (Int, List<Pair<Double, Double>>) -> Unit,
@@ -542,14 +543,30 @@ fun OSMDeliveryMap(
                     }
                     locationOverlay = myLocOverlay
 
-                    mv.overlays.clear()
-                    mv.overlays.addAll(
-                        listOf(poly, restMarker, homeMarker, riderMkr, myLocOverlay)
-                    )
+                    val isRiderAssigned = orderStatus == "Confirmed" || orderStatus == "OutForDelivery" || orderStatus == "Delivered"
 
-                    // Center map to fit all 3 key points
-                    val midLat = (restaurantLat + customerLat + driverLat) / 3.0
-                    val midLng = (restaurantLng + customerLng + driverLng) / 3.0
+                    mv.overlays.clear()
+                    if (isRiderAssigned) {
+                        mv.overlays.addAll(
+                            listOf(poly, restMarker, homeMarker, riderMkr, myLocOverlay)
+                        )
+                    } else {
+                        mv.overlays.addAll(
+                            listOf(restMarker, homeMarker, myLocOverlay)
+                        )
+                    }
+
+                    // Center map to fit all key points
+                    val midLat = if (isRiderAssigned) {
+                        (restaurantLat + customerLat + driverLat) / 3.0
+                    } else {
+                        (restaurantLat + customerLat) / 2.0
+                    }
+                    val midLng = if (isRiderAssigned) {
+                        (restaurantLng + customerLng + driverLng) / 3.0
+                    } else {
+                        (restaurantLng + customerLng) / 2.0
+                    }
                     mv.controller.setCenter(GeoPoint(midLat, midLng))
                     mv.controller.setZoom(14.5)
                 }

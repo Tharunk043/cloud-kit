@@ -49,8 +49,19 @@ object NotificationHelper {
         try {
             val notificationManager = NotificationManagerCompat.from(context)
             notificationManager.notify(System.currentTimeMillis().toInt(), builder.build())
+            playNotificationSound(context)
         } catch (e: SecurityException) {
             android.util.Log.e("NotificationHelper", "SecurityException posting notification: ${e.message}")
+        }
+    }
+
+    fun playNotificationSound(context: Context) {
+        try {
+            val uri = android.media.RingtoneManager.getDefaultUri(android.media.RingtoneManager.TYPE_NOTIFICATION)
+            val r = android.media.RingtoneManager.getRingtone(context, uri)
+            r?.play()
+        } catch (e: Exception) {
+            android.util.Log.e("NotificationHelper", "Failed to play notification sound: ${e.message}")
         }
     }
 }
