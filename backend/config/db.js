@@ -62,7 +62,8 @@ const initDB = async () => {
         address TEXT DEFAULT '',
         latitude DOUBLE PRECISION DEFAULT 0.0,
         longitude DOUBLE PRECISION DEFAULT 0.0,
-        updated_at BIGINT DEFAULT 0
+        updated_at BIGINT DEFAULT 0,
+        role VARCHAR(50) DEFAULT 'Customer'
       );
     `);
     // Alter statements to add missing columns if they exist from legacy runs
@@ -78,6 +79,7 @@ const initDB = async () => {
     await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS created_at BIGINT DEFAULT 0;');
     await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_at BIGINT DEFAULT 0;');
     await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at BIGINT DEFAULT 0;');
+    await client.query('ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(50) DEFAULT \'Customer\';');
     await client.query('ALTER TABLE users ALTER COLUMN updated_at SET DEFAULT 0;');
     await client.query('ALTER TABLE users ALTER COLUMN updated_at DROP NOT NULL;');
     // Add unique constraint on phone if not already present (safe to run multiple times)
@@ -93,6 +95,14 @@ const initDB = async () => {
           ALTER TABLE users ADD CONSTRAINT users_phone_unique UNIQUE (phone);
         END IF;
       END $$;
+    `);
+
+    // Trim existing phone numbers to the last 10 digits to resolve format mismatches
+    await client.query(`
+      DELETE FROM users WHERE id NOT IN (
+        SELECT MIN(id) FROM users GROUP BY SUBSTRING(phone FROM GREATEST(1, LENGTH(phone) - 9))
+      );
+      UPDATE users SET phone = SUBSTRING(phone FROM GREATEST(1, LENGTH(phone) - 9)) WHERE LENGTH(phone) > 10;
     `);
     console.log('Users table and profile columns verified.');
 
@@ -123,7 +133,9 @@ const initDB = async () => {
     await client.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS rating_given REAL DEFAULT 0.0;');
     await client.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS review_text TEXT DEFAULT \'\';');
     await client.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS review_sentiment VARCHAR(50) DEFAULT \'Neutral\';');
-    console.log('Orders table and rating columns verified.');
+    await client.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS driver_name VARCHAR(100) DEFAULT \'\';');
+    await client.query('ALTER TABLE orders ADD COLUMN IF NOT EXISTS driver_phone VARCHAR(50) DEFAULT \'\';');
+    console.log('Orders table and rating/driver columns verified.');
 
     // 4b. Create Wallet Transactions Table
     await client.query(`

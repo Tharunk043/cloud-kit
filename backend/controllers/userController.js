@@ -1,6 +1,15 @@
 const crypto = require('crypto');
 const { pool } = require('../config/db');
 
+// Helper to normalize phone numbers to their last 10 digits
+const cleanPhone = (phone) => {
+  if (!phone) return '';
+  // Remove all non-digit characters
+  const digits = phone.replace(/\D/g, '');
+  // Extract the last 10 digits
+  return digits.slice(-10);
+};
+
 // Helper to format a DB user row into the Kotlin DTO shape
 const formatUser = (user) => ({
   phone: user.phone,
@@ -13,13 +22,14 @@ const formatUser = (user) => ({
   isGoldMember: user.is_gold_member || false,
   walletBalance: parseFloat(user.wallet_balance || 0),
   createdAt: parseInt(user.created_at || 0),
-  lastLoginAt: parseInt(user.last_login_at || 0)
+  lastLoginAt: parseInt(user.last_login_at || 0),
+  role: user.role || 'Customer'
 });
 
 // GET /api/users/:phone — fetch user profile
 exports.getProfile = async (req, res, next) => {
   try {
-    const { phone } = req.params;
+    const phone = cleanPhone(req.params.phone);
     if (!phone) {
       return res.status(400).json({ success: false, message: 'Phone is required' });
     }
@@ -36,7 +46,8 @@ exports.getProfile = async (req, res, next) => {
 // POST /api/users/profile — create or update user (upsert by phone)
 exports.syncProfile = async (req, res, next) => {
   try {
-    const { phone, name, email } = req.body;
+    const { phone: rawPhone, name, email, role } = req.body;
+    const phone = cleanPhone(rawPhone);
     if (!phone) {
       return res.status(400).json({ success: false, message: 'Phone number is required' });
     }
@@ -44,21 +55,22 @@ exports.syncProfile = async (req, res, next) => {
     const now = Date.now();
     const userId = crypto.randomUUID();
 
-    // Upsert: insert new user OR update last_login + name/email if phone already exists
+    // Upsert: insert new user OR update last_login + name/email/role if phone already exists
     const upsertRes = await pool.query(
-      `INSERT INTO users (id, phone, name, email, wallet_balance, is_verified, created_at, last_login_at, updated_at)
-       VALUES ($1, $2, $3, $4, 100.0, TRUE, $5, $5, $5)
+      `INSERT INTO users (id, phone, name, email, wallet_balance, is_verified, created_at, last_login_at, updated_at, role)
+       VALUES ($1, $2, $3, $4, 100.0, TRUE, $5, $5, $5, $6)
        ON CONFLICT (phone) DO UPDATE SET
          last_login_at = EXCLUDED.last_login_at,
          name = CASE WHEN EXCLUDED.name <> '' THEN EXCLUDED.name ELSE users.name END,
          email = CASE WHEN EXCLUDED.email <> '' THEN EXCLUDED.email ELSE users.email END,
+         role = CASE WHEN EXCLUDED.role <> 'Customer' THEN EXCLUDED.role ELSE users.role END,
          is_verified = TRUE
        RETURNING *;`,
-      [userId, phone, name || '', email || '', now]
+      [userId, phone, name || '', email || '', now, role || 'Customer']
     );
 
     const user = upsertRes.rows[0];
-    console.log(`[User] Profile synced: phone=${phone}, name=${user.name}, walletBalance=${user.wallet_balance}`);
+    console.log(`[User] Profile synced: phone=${phone}, name=${user.name}, role=${user.role}, walletBalance=${user.wallet_balance}`);
 
     res.json({
       success: true,
@@ -75,7 +87,8 @@ exports.syncProfile = async (req, res, next) => {
 exports.updateLocation = async (req, res, next) => {
   try {
     const { userId, lat, lng, address } = req.body;
-    if (!userId) {
+    const phone = cleanPhone(userId);
+    if (!phone) {
       return res.status(400).json({ success: false, message: 'User ID (phone) is required' });
     }
     const updatedAt = Date.now();
@@ -86,7 +99,7 @@ exports.updateLocation = async (req, res, next) => {
          longitude = $3,
          updated_at = $4
        WHERE phone = $5;`,
-      [address || '', lat || 0.0, lng || 0.0, updatedAt, userId]
+      [address || '', lat || 0.0, lng || 0.0, updatedAt, phone]
     );
     res.json({ success: true, data: null, message: 'Location updated successfully', cached: false });
   } catch (error) {
@@ -97,7 +110,7 @@ exports.updateLocation = async (req, res, next) => {
 // GET /api/users/:phone/wallet — get balance and transactions
 exports.getWalletTransactions = async (req, res, next) => {
   try {
-    const { phone } = req.params;
+    const phone = cleanPhone(req.params.phone);
     if (!phone) {
       return res.status(400).json({ success: false, message: 'Phone is required' });
     }
@@ -148,7 +161,7 @@ exports.getWalletTransactions = async (req, res, next) => {
 // POST /api/users/:phone/wallet — create new transaction (deposit, payment, etc.)
 exports.addWalletTransaction = async (req, res, next) => {
   try {
-    const { phone } = req.params;
+    const phone = cleanPhone(req.params.phone);
     const { type, amount, description, memberName } = req.body;
 
     if (!phone || !type || amount === undefined) {
@@ -217,7 +230,7 @@ exports.addWalletTransaction = async (req, res, next) => {
 // GET /api/users/:phone/addresses — get all saved addresses
 exports.getAddresses = async (req, res, next) => {
   try {
-    const { phone } = req.params;
+    const phone = cleanPhone(req.params.phone);
     if (!phone) {
       return res.status(400).json({ success: false, message: 'Phone is required' });
     }
@@ -247,7 +260,7 @@ exports.getAddresses = async (req, res, next) => {
 // POST /api/users/:phone/addresses — add new address
 exports.addAddress = async (req, res, next) => {
   try {
-    const { phone } = req.params;
+    const phone = cleanPhone(req.params.phone);
     const { label, fullAddress, latitude, longitude, isDefault } = req.body;
 
     if (!phone || !label || !fullAddress || latitude === undefined || longitude === undefined) {
@@ -305,7 +318,8 @@ exports.addAddress = async (req, res, next) => {
 // DELETE /api/users/:phone/addresses/:id — delete address
 exports.deleteAddress = async (req, res, next) => {
   try {
-    const { phone, id } = req.params;
+    const phone = cleanPhone(req.params.phone);
+    const { id } = req.params;
     if (!phone || !id) {
       return res.status(400).json({ success: false, message: 'Required fields missing' });
     }

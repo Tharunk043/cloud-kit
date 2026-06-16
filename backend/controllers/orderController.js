@@ -1,6 +1,13 @@
 const crypto = require('crypto');
 const { pool } = require('../config/db');
 
+// Helper to normalize phone numbers to their last 10 digits
+const cleanPhone = (phone) => {
+  if (!phone) return '';
+  const digits = phone.replace(/\D/g, '');
+  return digits.slice(-10);
+};
+
 // Helper to format database orders into Kotlin client DTOs
 const formatOrder = (dbOrder) => {
   if (!dbOrder) return null;
@@ -22,7 +29,9 @@ const formatOrder = (dbOrder) => {
     createdAt: parseInt(dbOrder.created_at),
     ratingGiven: parseFloat(dbOrder.rating_given || 0.0),
     reviewText: dbOrder.review_text || '',
-    reviewSentiment: dbOrder.review_sentiment || 'Neutral'
+    reviewSentiment: dbOrder.review_sentiment || 'Neutral',
+    driverName: dbOrder.driver_name || '',
+    driverPhone: dbOrder.driver_phone || ''
   };
 };
 
@@ -42,7 +51,7 @@ exports.placeOrder = async (req, res, next) => {
       restaurantLng
     } = req.body;
 
-    const userId = bodyUserId || req.user || 'guest';
+    const userId = cleanPhone(bodyUserId || req.user || 'guest');
     const orderId = crypto.randomUUID();
     const itemsJson = JSON.stringify(items);
     const createdAt = Date.now();
@@ -116,16 +125,42 @@ exports.placeOrder = async (req, res, next) => {
   }
 };
 
-// Get orders for a user
-exports.getUserOrders = async (req, res, next) => {
+// Get orders with optional filters (userId, restaurantId, status, unassigned)
+exports.getOrders = async (req, res, next) => {
   try {
-    const userId = req.query.userId || req.user || 'guest';
+    const { userId: rawUserId, restaurantId, status, unassigned } = req.query;
+    const userId = cleanPhone(rawUserId);
+    
+    let queryText = 'SELECT * FROM orders';
+    const params = [];
+    const conditions = [];
 
-    const result = await pool.query(
-      'SELECT * FROM orders WHERE user_id = $1 ORDER BY created_at DESC;',
-      [userId]
-    );
+    if (userId) {
+      params.push(userId);
+      conditions.push(`user_id = $${params.length}`);
+    }
+    if (restaurantId) {
+      params.push(restaurantId);
+      conditions.push(`restaurant_id = $${params.length}`);
+    }
+    if (status) {
+      const statusList = status.split(',');
+      const placeholders = statusList.map(s => {
+        params.push(s);
+        return `$${params.length}`;
+      }).join(', ');
+      conditions.push(`status IN (${placeholders})`);
+    }
+    if (unassigned === 'true') {
+      conditions.push(`(driver_name IS NULL OR driver_name = '')`);
+    }
 
+    if (conditions.length > 0) {
+      queryText += ' WHERE ' + conditions.join(' AND ');
+    }
+    queryText += ' ORDER BY created_at DESC;';
+
+    const result = await pool.query(queryText, params);
     const formattedList = result.rows.map(formatOrder);
 
     res.json({
@@ -139,7 +174,7 @@ exports.getUserOrders = async (req, res, next) => {
   }
 };
 
-// Track order status and simulate driver coordinates updating
+// Track order status (retrieve direct database state without simulation)
 exports.trackOrder = async (req, res, next) => {
   try {
     const id = req.params.id;
@@ -152,51 +187,7 @@ exports.trackOrder = async (req, res, next) => {
       });
     }
 
-    const order = result.rows[0];
-    let status = order.status;
-    let driverLat = order.driver_lat;
-    let driverLng = order.driver_lng;
-
-    // Dynamic state machine simulation for order tracking
-    if (status === 'Placed') {
-      status = 'Confirmed';
-      console.log(`[Order] ${id} -> Confirmed`);
-    } else if (status === 'Confirmed') {
-      status = 'Cooking';
-      console.log(`[Order] ${id} -> Cooking`);
-    } else if (status === 'Cooking') {
-      status = 'OutForDelivery';
-      driverLat = (order.restaurant_lat + order.customer_lat) / 2;
-      driverLng = (order.restaurant_lng + order.customer_lng) / 2;
-      console.log(`[Order] ${id} -> OutForDelivery`);
-    } else if (status === 'OutForDelivery') {
-      const latDiff = order.customer_lat - driverLat;
-      const lngDiff = order.customer_lng - driverLng;
-      const distance = Math.sqrt(latDiff * latDiff + lngDiff * lngDiff);
-
-      // dynamic step size to guarantee delivery completes within 12 steps (approx 1 minute)
-      const step = Math.max(0.0008, distance / 12); 
-      if (distance <= step || (Math.abs(latDiff) < step && Math.abs(lngDiff) < step)) {
-        status = 'Delivered';
-        driverLat = order.customer_lat;
-        driverLng = order.customer_lng;
-        console.log(`[Order] ${id} -> Delivered`);
-      } else {
-        driverLat = driverLat + (latDiff / distance) * step;
-        driverLng = driverLng + (lngDiff / distance) * step;
-      }
-    }
-
-    const updateResult = await pool.query(`
-      UPDATE orders SET
-        status = $1,
-        driver_lat = $2,
-        driver_lng = $3
-      WHERE id = $4
-      RETURNING *;
-    `, [status, driverLat, driverLng, id]);
-
-    const formatted = formatOrder(updateResult.rows[0]);
+    const formatted = formatOrder(result.rows[0]);
 
     res.json({
       success: true,
@@ -209,18 +200,24 @@ exports.trackOrder = async (req, res, next) => {
   }
 };
 
-// Update order status manually
+// Update order status manually (supports coordinates as well)
 exports.updateStatus = async (req, res, next) => {
   try {
     const id = req.params.id;
-    const { status } = req.body;
+    const { status, driverLat, driverLng } = req.body;
 
-    const result = await pool.query(`
-      UPDATE orders SET
-        status = $1
-      WHERE id = $2
-      RETURNING *;
-    `, [status, id]);
+    let queryText = 'UPDATE orders SET status = $1';
+    const params = [status];
+
+    if (driverLat !== undefined && driverLng !== undefined) {
+      params.push(parseFloat(driverLat), parseFloat(driverLng));
+      queryText += `, driver_lat = $2, driver_lng = $3`;
+    }
+
+    params.push(id);
+    queryText += ` WHERE id = $${params.length} RETURNING *;`;
+
+    const result = await pool.query(queryText, params);
 
     if (result.rows.length === 0) {
       return res.status(404).json({
@@ -230,12 +227,50 @@ exports.updateStatus = async (req, res, next) => {
     }
 
     const formatted = formatOrder(result.rows[0]);
-    console.log(`[Order] Status updated: ${id} -> ${status}`);
+    console.log(`[Order] Status updated: ${id} -> ${status} (lat=${driverLat}, lng=${driverLng})`);
 
     res.json({
       success: true,
       data: formatted,
       message: 'Order status updated successfully',
+      cached: false
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// Accept order as rider
+exports.acceptRider = async (req, res, next) => {
+  try {
+    const id = req.params.id;
+    const { driverName, driverPhone, driverLat, driverLng } = req.body;
+
+    const result = await pool.query(`
+      UPDATE orders SET
+        status = 'Confirmed',
+        driver_name = $1,
+        driver_phone = $2,
+        driver_lat = $3,
+        driver_lng = $4
+      WHERE id = $5
+      RETURNING *;
+    `, [driverName || '', driverPhone || '', parseFloat(driverLat || 0.0), parseFloat(driverLng || 0.0), id]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: `Order not found with id: ${id}`
+      });
+    }
+
+    const formatted = formatOrder(result.rows[0]);
+    console.log(`[Order] Rider accepted order ${id}: rider=${driverName}`);
+
+    res.json({
+      success: true,
+      data: formatted,
+      message: 'Rider accepted order successfully',
       cached: false
     });
   } catch (error) {
