@@ -276,7 +276,6 @@ fun OSMDeliveryMap(
     var locationOverlay by remember { mutableStateOf<MyLocationNewOverlay?>(null) }
     var routePoints by remember { mutableStateOf<List<GeoPoint>>(emptyList()) }
     var isRouteLoading by remember { mutableStateOf(false) }
-    val prevDriverPos = remember { BoxedGeoPoint() }
 
     // Lifecycle management for MapView
     DisposableEffect(lifecycleOwner) {
@@ -323,8 +322,7 @@ fun OSMDeliveryMap(
     LaunchedEffect(driverLat, driverLng, driverMarker) {
         if (driverMarker == null) return@LaunchedEffect
         val target = GeoPoint(driverLat, driverLng)
-        val start = prevDriverPos.value ?: GeoPoint(driverLat, driverLng)
-        prevDriverPos.value = target
+        val start = driverMarker?.position ?: GeoPoint(driverLat, driverLng)
 
         if (start.latitude == target.latitude && start.longitude == target.longitude) {
             // No movement — just ensure marker is at correct position and rotated

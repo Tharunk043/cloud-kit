@@ -82,6 +82,7 @@ class AppRepository(private val context: Context) {
     val familyMembers: Flow<List<FamilyMemberEntity>> = dao.getFamilyMembers()
     val familyTransactions: Flow<List<FamilyTransactionEntity>> = dao.getFamilyTransactions()
     val paymentMethods: Flow<List<PaymentMethodEntity>> = dao.getPaymentMethods()
+    val categories: Flow<List<com.example.data.local.CategoryEntity>> = dao.getAllCategories()
 
     private val repositoryScope = CoroutineScope(Dispatchers.IO)
 
@@ -92,6 +93,20 @@ class AppRepository(private val context: Context) {
     }
 
     private suspend fun seedDatabase() = withContext(Dispatchers.IO) {
+        val currentCategories = dao.getAllCategories().first()
+        if (currentCategories.isEmpty()) {
+            Log.d("AppRepository", "Categories database is empty. Seeding premium categories...")
+            val seedCats = listOf(
+                com.example.data.local.CategoryEntity("burgers", "Burgers", "ic_category_burger", "#FFFFEAD2"),
+                com.example.data.local.CategoryEntity("pizza", "Pizza", "ic_category_pizza", "#FFFFF1EB"),
+                com.example.data.local.CategoryEntity("sushi", "Sushi", "ic_category_sushi", "#FFE4F0EC"),
+                com.example.data.local.CategoryEntity("healthy", "Healthy", "ic_category_healthy", "#FFE2F3E7"),
+                com.example.data.local.CategoryEntity("desserts", "Desserts", "ic_category_dessert", "#FFFFF0F5"),
+                com.example.data.local.CategoryEntity("ramen", "Ramen", "ic_category_ramen", "#FFFFEAD2")
+            )
+            dao.insertCategories(seedCats)
+        }
+
         val currentRestaurants = dao.getAllRestaurants().first()
         if (currentRestaurants.isEmpty()) {
             Log.d("AppRepository", "Database is empty. Pre-seeding delicious full-stack menus...")
@@ -553,11 +568,9 @@ class AppRepository(private val context: Context) {
     private fun startServerDrivenTracking(localOrderId: Int, mongoOrderId: String) {
         repositoryScope.launch {
             var isTracking = true
-            var attempts = 0
             var lastStatus = ""
-            while (isTracking && attempts < 30) {
+            while (isTracking) {
                 delay(4000)
-                attempts++
                 try {
                     val response = apiService.trackOrder(mongoOrderId)
                     if (response.isSuccessful && response.body()?.success == true) {

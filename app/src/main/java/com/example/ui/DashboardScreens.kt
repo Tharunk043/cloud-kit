@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -388,16 +390,17 @@ fun ActiveOrderBanner(
                     ),
                     label = "scale"
                 )
-                Text(
-                    text = when (order.status) {
-                        "Placed" -> "📝"
-                        "Accepted" -> "👍"
-                        "Preparing" -> "🍳"
-                        "OutForDelivery" -> "🛵"
-                        else -> "🍔"
-                    },
-                    fontSize = 20.sp,
-                    modifier = Modifier.graphicsLayer {
+                val orderIconRes = when (order.status) {
+                    "Placed" -> com.example.R.drawable.ic_service_genie
+                    "Accepted" -> com.example.R.drawable.ic_wallet_cashback
+                    "Preparing" -> com.example.R.drawable.ic_category_ramen
+                    "OutForDelivery" -> com.example.R.drawable.ic_category_burger
+                    else -> com.example.R.drawable.ic_category_burger
+                }
+                Image(
+                    painter = painterResource(id = orderIconRes),
+                    contentDescription = order.status,
+                    modifier = Modifier.size(24.dp).graphicsLayer {
                         scaleX = scale
                         scaleY = scale
                     }
@@ -472,8 +475,7 @@ fun CustomerSection(
                     val items = listOf(
                         Triple(Screen.Home, Icons.Outlined.Home, "Explore"),
                         Triple(Screen.Cart, Icons.Outlined.ShoppingCart, "Cart"),
-                        Triple(Screen.Wallet, Icons.Outlined.AccountBalanceWallet, "Wallet"),
-                        Triple(Screen.Support, Icons.Outlined.Sms, "AI Chat")
+                        Triple(Screen.Wallet, Icons.Outlined.AccountBalanceWallet, "Wallet")
                     )
                     items.forEach { (screen, icon, label) ->
                         val selected = currentScreen.route == screen.route
@@ -528,7 +530,6 @@ fun CustomerSection(
                 is Screen.Cart -> ClientCartView(viewModel, onNavigate)
                 is Screen.Tracking -> ActiveOrderTrackingView(viewModel, onNavigate)
                 is Screen.Wallet -> ClientWalletView(viewModel, onOpenFamily = onOpenFamily)
-                is Screen.Support -> GeminiSupportView(viewModel)
                 is Screen.OrdersHistory -> OrdersHistoryView(
                     viewModel = viewModel,
                     onNavigate = onNavigate,
@@ -831,6 +832,16 @@ fun ExploreView(
         // Swiggy Service Verticals Directory Quick Grid
         item {
             Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                var isVisible by remember { mutableStateOf(false) }
+                LaunchedEffect(Unit) {
+                    isVisible = true
+                }
+                
+                val scale1 by animateFloatAsState(targetValue = if (isVisible) 1f else 0.5f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow), label = "s1")
+                val scale2 by animateFloatAsState(targetValue = if (isVisible) 1f else 0.5f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow), label = "s2")
+                val scale3 by animateFloatAsState(targetValue = if (isVisible) 1f else 0.5f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow), label = "s3")
+                val scale4 by animateFloatAsState(targetValue = if (isVisible) 1f else 0.5f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow), label = "s4")
+
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -842,6 +853,10 @@ fun ExploreView(
                         modifier = Modifier
                             .weight(1f)
                             .height(115.dp)
+                            .graphicsLayer {
+                                scaleX = scale1
+                                scaleY = scale1
+                            }
                             .clip(RoundedCornerShape(16.dp))
                             .background(
                                 Brush.linearGradient(
@@ -873,7 +888,11 @@ fun ExploreView(
                                 verticalAlignment = Alignment.Bottom
                             ) {
                                 Text("UP TO 50% OFF", fontSize = 9.sp, color = Color(0xFFFC8019), fontWeight = FontWeight.Black)
-                                Text("🍔", fontSize = 26.sp)
+                                Image(
+                                    painter = painterResource(id = com.example.R.drawable.ic_category_burger),
+                                    contentDescription = "Food Delivery",
+                                    modifier = Modifier.size(32.dp)
+                                )
                             }
                         }
                     }
@@ -883,6 +902,10 @@ fun ExploreView(
                         modifier = Modifier
                             .weight(1f)
                             .height(115.dp)
+                            .graphicsLayer {
+                                scaleX = scale2
+                                scaleY = scale2
+                            }
                             .clip(RoundedCornerShape(16.dp))
                             .background(
                                 Brush.linearGradient(
@@ -914,7 +937,11 @@ fun ExploreView(
                                 verticalAlignment = Alignment.Bottom
                             ) {
                                 Text("FRESH ITEMS", fontSize = 9.sp, color = Color(0xFF2E7D32), fontWeight = FontWeight.Black)
-                                Text("🥦", fontSize = 26.sp)
+                                Image(
+                                    painter = painterResource(id = com.example.R.drawable.ic_service_instamart),
+                                    contentDescription = "Instamart",
+                                    modifier = Modifier.size(32.dp)
+                                )
                             }
                         }
                     }
@@ -931,6 +958,10 @@ fun ExploreView(
                         modifier = Modifier
                             .weight(1f)
                             .height(115.dp)
+                            .graphicsLayer {
+                                scaleX = scale3
+                                scaleY = scale3
+                            }
                             .clip(RoundedCornerShape(16.dp))
                             .background(
                                 Brush.linearGradient(
@@ -962,7 +993,11 @@ fun ExploreView(
                                 verticalAlignment = Alignment.Bottom
                             ) {
                                 Text("FLAT 30% OFF", fontSize = 9.sp, color = Color(0xFF1E88E5), fontWeight = FontWeight.Black)
-                                Text("🍷", fontSize = 26.sp)
+                                Image(
+                                    painter = painterResource(id = com.example.R.drawable.ic_service_dineout),
+                                    contentDescription = "Dineout",
+                                    modifier = Modifier.size(32.dp)
+                                )
                             }
                         }
                     }
@@ -972,6 +1007,10 @@ fun ExploreView(
                         modifier = Modifier
                             .weight(1f)
                             .height(115.dp)
+                            .graphicsLayer {
+                                scaleX = scale4
+                                scaleY = scale4
+                            }
                             .clip(RoundedCornerShape(16.dp))
                             .background(
                                 Brush.linearGradient(
@@ -1003,7 +1042,11 @@ fun ExploreView(
                                 verticalAlignment = Alignment.Bottom
                             ) {
                                 Text("SEND PARCEL", fontSize = 9.sp, color = Color(0xFF8E24AA), fontWeight = FontWeight.Black)
-                                Text("🎁", fontSize = 26.sp)
+                                Image(
+                                    painter = painterResource(id = com.example.R.drawable.ic_service_genie),
+                                    contentDescription = "Genie Courier",
+                                    modifier = Modifier.size(32.dp)
+                                )
                             }
                         }
                     }
@@ -1066,24 +1109,68 @@ fun ExploreView(
                     modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
                 )
                 
-                val premiumCategories = listOf(
-                    Triple("Burgers", "🍔", CategoryBurger),
-                    Triple("Pizza", "🍕", CategoryPizza),
-                    Triple("Sushi", "🍣", CategorySushi),
-                    Triple("Healthy", "🥗", CategoryHealthy),
-                    Triple("Desserts", "🍰", CategoryDessert),
-                    Triple("Ramen", "🍜", CategoryBurger)
+                val dbCategoriesState by viewModel.categories.collectAsState()
+                val dbCategories = if (dbCategoriesState.isNotEmpty()) dbCategoriesState else listOf(
+                    com.example.data.local.CategoryEntity("burgers", "Burgers", "ic_category_burger", "#FFFFEAD2"),
+                    com.example.data.local.CategoryEntity("pizza", "Pizza", "ic_category_pizza", "#FFFFF1EB"),
+                    com.example.data.local.CategoryEntity("sushi", "Sushi", "ic_category_sushi", "#FFE4F0EC"),
+                    com.example.data.local.CategoryEntity("healthy", "Healthy", "ic_category_healthy", "#FFE2F3E7"),
+                    com.example.data.local.CategoryEntity("desserts", "Desserts", "ic_category_dessert", "#FFFFF0F5"),
+                    com.example.data.local.CategoryEntity("ramen", "Ramen", "ic_category_ramen", "#FFFFEAD2")
                 )
+                val context = LocalContext.current
                 
                 LazyRow(
                     contentPadding = PaddingValues(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    items(premiumCategories) { (title, emoji, color) ->
+                    itemsIndexed(dbCategories) { index, catEntity ->
+                        val title = catEntity.name
                         val isSelected = category == title
+                        
+                        val drawableId = remember(catEntity.imageResName) {
+                            val id = context.resources.getIdentifier(catEntity.imageResName, "drawable", context.packageName)
+                            if (id != 0) id else com.example.R.drawable.ic_category_burger
+                        }
+                        
+                        val parsedColor = remember(catEntity.colorHex) {
+                            try {
+                                Color(android.graphics.Color.parseColor(catEntity.colorHex))
+                            } catch (e: Exception) {
+                                CategoryBurger
+                            }
+                        }
+
+                        // Staggered pop-in bounce animation
+                        var isVisible by remember { mutableStateOf(false) }
+                        LaunchedEffect(catEntity.id) {
+                            delay(50L * index)
+                            isVisible = true
+                        }
+
+                        val scale by animateFloatAsState(
+                            targetValue = if (isVisible) 1f else 0.3f,
+                            animationSpec = spring(
+                                dampingRatio = Spring.DampingRatioMediumBouncy,
+                                stiffness = Spring.StiffnessLow
+                            ),
+                            label = "category_scale"
+                        )
+
+                        val alpha by animateFloatAsState(
+                            targetValue = if (isVisible) 1f else 0f,
+                            animationSpec = tween(durationMillis = 300, easing = LinearOutSlowInEasing),
+                            label = "category_alpha"
+                        )
+
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier
+                                .graphicsLayer {
+                                    scaleX = scale
+                                    scaleY = scale
+                                    this.alpha = alpha
+                                }
                                 .clickable {
                                     if (isSelected) {
                                         viewModel.activeCategory.value = "All"
@@ -1097,7 +1184,7 @@ fun ExploreView(
                                 modifier = Modifier
                                     .size(66.dp)
                                     .clip(CircleShape)
-                                    .background(color)
+                                    .background(parsedColor)
                                     .border(
                                         width = if (isSelected) 2.dp else 0.dp,
                                         color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
@@ -1105,7 +1192,12 @@ fun ExploreView(
                                     ),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(emoji, fontSize = 32.sp)
+                                Image(
+                                    painter = painterResource(id = drawableId),
+                                    contentDescription = title,
+                                    modifier = Modifier.size(42.dp),
+                                    contentScale = ContentScale.Fit
+                                )
                             }
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
@@ -2996,12 +3088,6 @@ fun ActiveOrderTrackingView(
         return
     }
 
-    // AI Predictive inputs
-    var weatherInput by remember { mutableStateOf("Clear Sky") }
-    var trafficInput by remember { mutableStateOf("Low Traffic") }
-    val predictiveTimeResult by viewModel.predictiveTimeResult.collectAsState()
-    val isPredictiveLoading by viewModel.isPredictiveLoading.collectAsState()
-
     var reviewRating by remember { mutableStateOf(5f) }
     var reviewComment by remember { mutableStateOf("") }
     var reviewSubmitted by remember { mutableStateOf(false) }
@@ -3045,52 +3131,14 @@ fun ActiveOrderTrackingView(
 
         // Live coordinate map drawing
         item {
-            var selectedMapTab by remember { mutableStateOf("gps") } // gps or radar
             val darkThemeFlow by viewModel.isDarkTheme.collectAsState()
 
             Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 8.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text("Real-Time Delivery Coordination", fontWeight = FontWeight.Bold)
-                
-                // Segmented Toggle control
-                Row(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                        .padding(2.dp)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(if (selectedMapTab == "gps") MaterialTheme.colorScheme.primary else Color.Transparent)
-                            .clickable { selectedMapTab = "gps" }
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            "LIVE MAP",
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (selectedMapTab == "gps") MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(if (selectedMapTab == "radar") MaterialTheme.colorScheme.primary else Color.Transparent)
-                            .clickable { selectedMapTab = "radar" }
-                            .padding(horizontal = 8.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            "RADAR",
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = if (selectedMapTab == "radar") MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
             }
 
             Box(
@@ -3105,83 +3153,94 @@ fun ActiveOrderTrackingView(
                 val getCache = remember(viewModel) { { id: Int -> viewModel.getCachedRoute(id) } }
                 val saveCache = remember(viewModel) { { id: Int, pts: List<Pair<Double, Double>> -> viewModel.cacheRoute(id, pts) } }
 
-                if (selectedMapTab == "gps") {
-                    OSMDeliveryMap(
-                        orderId = activeOrder.id,
-                        customerLat = activeOrder.customerLat,
-                        customerLng = activeOrder.customerLng,
-                        restaurantLat = activeOrder.restaurantLat,
-                        restaurantLng = activeOrder.restaurantLng,
-                        driverLat = activeOrder.driverLat,
-                        driverLng = activeOrder.driverLng,
-                        isDarkTheme = darkThemeFlow,
-                        getCachedRoute = getCache,
-                        cacheRoute = saveCache,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                } else {
-                    // Both tabs now show the real OSM map
-                    OSMDeliveryMap(
-                        orderId = activeOrder.id,
-                        customerLat = activeOrder.customerLat,
-                        customerLng = activeOrder.customerLng,
-                        restaurantLat = activeOrder.restaurantLat,
-                        restaurantLng = activeOrder.restaurantLng,
-                        driverLat = activeOrder.driverLat,
-                        driverLng = activeOrder.driverLng,
-                        isDarkTheme = darkThemeFlow,
-                        getCachedRoute = getCache,
-                        cacheRoute = saveCache,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
+                OSMDeliveryMap(
+                    orderId = activeOrder.id,
+                    customerLat = activeOrder.customerLat,
+                    customerLng = activeOrder.customerLng,
+                    restaurantLat = activeOrder.restaurantLat,
+                    restaurantLng = activeOrder.restaurantLng,
+                    driverLat = activeOrder.driverLat,
+                    driverLng = activeOrder.driverLng,
+                    isDarkTheme = darkThemeFlow,
+                    getCachedRoute = getCache,
+                    cacheRoute = saveCache,
+                    modifier = Modifier.fillMaxSize()
+                )
             }
         }
 
-        // Live predictive time (Using Gemini AI)
+        // Continuous Live ETA (Calculated automatically based on coordinates)
         item {
+            val startLat = activeOrder.restaurantLat
+            val startLng = activeOrder.restaurantLng
+            val endLat = activeOrder.customerLat
+            val endLng = activeOrder.customerLng
+            val driverLat = activeOrder.driverLat
+            val driverLng = activeOrder.driverLng
+            val status = activeOrder.status
+
+            // Haversine formula for real distance calculation
+            val distanceKm = remember(driverLat, driverLng, endLat, endLng) {
+                val R = 6371.0 // Radius of the earth in km
+                val dLat = Math.toRadians(endLat - driverLat)
+                val dLon = Math.toRadians(endLng - driverLng)
+                val a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                        Math.cos(Math.toRadians(driverLat)) * Math.cos(Math.toRadians(endLat)) *
+                        Math.sin(dLon / 2) * Math.sin(dLon / 2)
+                val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+                R * c
+            }
+
+            val etaText = remember(status, distanceKm) {
+                when (status) {
+                    "Placed", "Accepted" -> "20 - 25 mins (Restaurant accepting order)"
+                    "Preparing", "Cooking" -> "15 - 20 mins (Chef preparing your meal)"
+                    "OutForDelivery" -> {
+                        val etaMinutes = (distanceKm * 2.5).toInt().coerceAtLeast(1)
+                        "Arriving in $etaMinutes mins (~${String.format(java.util.Locale.US, "%.1f", distanceKm)} km away)"
+                    }
+                    "Delivered" -> "Delivered (Enjoy your meal! 🍽️)"
+                    "Cancelled" -> "Cancelled"
+                    else -> "Estimating..."
+                }
+            }
+
             Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)),
                 modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
                 shape = RoundedCornerShape(16.dp)
             ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Text("AI Predictive ETA Calculator", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.secondary)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = weatherInput,
-                            onValueChange = { weatherInput = it },
-                            placeholder = { Text("Weather") },
-                            modifier = Modifier.weight(1f),
-                            textStyle = TextStyle(fontSize = 12.sp),
-                            singleLine = true
-                        )
-                        OutlinedTextField(
-                            value = trafficInput,
-                            onValueChange = { trafficInput = it },
-                            placeholder = { Text("Traffic") },
-                            modifier = Modifier.weight(1f),
-                            textStyle = TextStyle(fontSize = 12.sp),
-                            singleLine = true
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Button(
-                        onClick = { viewModel.runAiPredictiveTime(weatherInput, trafficInput, 3.2f) },
-                        modifier = Modifier.fillMaxWidth().testTag("ai_predict_btn")
-                    ) {
-                        if (isPredictiveLoading) {
-                            CircularProgressIndicator(color = Color.White, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                        } else {
-                            Text("PREDICT FAST ETA", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-
-                    if (predictiveTimeResult.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(predictiveTimeResult, fontSize = 12.sp, lineHeight = 16.sp, color = MaterialTheme.colorScheme.onSurface)
-                    }
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Estimated Delivery Time",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 13.sp,
+                        color = MaterialTheme.colorScheme.secondary
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = etaText,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.primary,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    LinearProgressIndicator(
+                        progress = when (status) {
+                            "Placed", "Accepted" -> 0.25f
+                            "Preparing", "Cooking" -> 0.50f
+                            "OutForDelivery" -> 0.75f
+                            "Delivered" -> 1.0f
+                            else -> 0.0f
+                        },
+                        color = MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                        modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp))
+                    )
                 }
             }
         }
@@ -3509,26 +3568,78 @@ fun ClientWalletView(viewModel: PlatformViewModel, onOpenFamily: () -> Unit = {}
                     contentAlignment = Alignment.Center
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("💳", fontSize = 40.sp)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text("No transactions yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        var isAnimated by remember { mutableStateOf(false) }
+                        LaunchedEffect(Unit) {
+                            isAnimated = true
+                        }
+                        val floatOffset by animateFloatAsState(
+                            targetValue = if (isAnimated) -10f else 10f,
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(1500, easing = EaseInOutSine),
+                                repeatMode = RepeatMode.Reverse
+                            ),
+                            label = "wallet_card_float"
+                        )
+                        val scale by animateFloatAsState(
+                            targetValue = if (isAnimated) 1f else 0.8f,
+                            animationSpec = tween(600, easing = EaseOutBack),
+                            label = "wallet_card_scale"
+                        )
+                        Image(
+                            painter = painterResource(id = com.example.R.drawable.ic_wallet_card),
+                            contentDescription = "Wallet Empty State",
+                            modifier = Modifier
+                                .size(90.dp)
+                                .graphicsLayer {
+                                    translationY = floatOffset
+                                    scaleX = scale
+                                    scaleY = scale
+                                }
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text("No transactions yet.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
         } else {
-            items(transactions) { tx ->
+            itemsIndexed(transactions) { index, tx ->
                 val isCredit = tx.type in listOf("Deposit", "Refund", "Cashback")
-                val txIcon = when (tx.type) {
-                    "Deposit" -> "💰"
-                    "Cashback" -> "🎁"
-                    "Refund" -> "↩️"
-                    "FamilyDebit" -> "👨‍👩‍👧"
-                    else -> "🛍️"
+                val txIconRes = when (tx.type) {
+                    "Deposit" -> com.example.R.drawable.ic_wallet_deposit
+                    "Cashback" -> com.example.R.drawable.ic_wallet_cashback
+                    "Refund" -> com.example.R.drawable.ic_wallet_refund
+                    "FamilyDebit" -> com.example.R.drawable.ic_wallet_family
+                    else -> com.example.R.drawable.ic_wallet_shopping
                 }
+
+                // Staggered slide/fade animation
+                var isVisible by remember { mutableStateOf(false) }
+                LaunchedEffect(tx.id) {
+                    delay(40L * index)
+                    isVisible = true
+                }
+                val slideOffset by animateDpAsState(
+                    targetValue = if (isVisible) 0.dp else 40.dp,
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                        stiffness = Spring.StiffnessLow
+                    ),
+                    label = "tx_row_slide"
+                )
+                val alpha by animateFloatAsState(
+                    targetValue = if (isVisible) 1f else 0f,
+                    animationSpec = tween(300, easing = LinearOutSlowInEasing),
+                    label = "tx_row_alpha"
+                )
+
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 16.dp, vertical = 4.dp)
+                        .graphicsLayer {
+                            translationY = slideOffset.toPx()
+                            this.alpha = alpha
+                        }
                         .clip(RoundedCornerShape(14.dp))
                         .background(MaterialTheme.colorScheme.surface)
                         .padding(14.dp),
@@ -3545,7 +3656,11 @@ fun ClientWalletView(viewModel: PlatformViewModel, onOpenFamily: () -> Unit = {}
                                 ),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(txIcon, fontSize = 18.sp)
+                            Image(
+                                painter = painterResource(id = txIconRes),
+                                contentDescription = tx.type,
+                                modifier = Modifier.size(24.dp)
+                            )
                         }
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {

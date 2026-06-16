@@ -184,10 +184,29 @@ data class SavedAddressEntity(
     val createdAt: Long = System.currentTimeMillis()
 )
 
+// --- Category Entity ---
+@Entity(tableName = "categories")
+data class CategoryEntity(
+    @PrimaryKey val id: String,
+    val name: String,
+    val imageResName: String,
+    val colorHex: String
+)
+
 // --- DAOs ---
 
 @Dao
 interface PlatformDao {
+    // Categories
+    @Query("SELECT * FROM categories")
+    fun getAllCategories(): Flow<List<CategoryEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertCategories(categories: List<CategoryEntity>)
+
+    @Query("DELETE FROM categories")
+    suspend fun clearCategories()
+
     // Restaurants
     @Query("SELECT * FROM restaurants")
     fun getAllRestaurants(): Flow<List<RestaurantEntity>>
@@ -391,9 +410,10 @@ interface PlatformDao {
         FamilyTransactionEntity::class,
         PaymentMethodEntity::class,
         UserEntity::class,
-        SavedAddressEntity::class
+        SavedAddressEntity::class,
+        CategoryEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

@@ -46,6 +46,9 @@ class PlatformViewModel(application: Application) : AndroidViewModel(application
     val userAddress = MutableStateFlow("Tap to set delivery location")
     val isDarkTheme = MutableStateFlow(false)
 
+    val categories: StateFlow<List<com.example.data.local.CategoryEntity>> = repository.categories
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     // --- Auth & User Identity (Directly from Database, no cache) ---
     val currentUserFlow: kotlinx.coroutines.flow.Flow<UserEntity?> = repository.dao.observeCurrentUser()
 
