@@ -25,34 +25,47 @@ class OrderSimulationWorker(
         }
 
         Log.d("OrderSimulationWorker", "Starting order status simulation for ID: $orderId")
-        val db = Room.databaseBuilder(applicationContext, AppDatabase::class.java, "bitecraft_db")
-            .fallbackToDestructiveMigration()
+        val db = Room.databaseBuilder(applicationContext, AppDatabase::class.java, "bitecraft_database.db")
+            .fallbackToDestructiveMigration(dropAllTables = true)
             .build()
         val dao = db.dao()
 
         try {
-            // 1. Accepted
-            delay(4000)
-            dao.updateOrderStatus(orderId, "Accepted")
-            NotificationHelper.showNotification(applicationContext, "Order Update", "Your order has been Accepted by the restaurant!")
+            val order = dao.getOrderById(orderId)
+            if (order == null) {
+                Log.e("OrderSimulationWorker", "Order not found in DB")
+                db.close()
+                return Result.failure()
+            }
 
-            // 2. Preparing
-            delay(5000)
-            dao.updateOrderStatus(orderId, "Preparing")
-            NotificationHelper.showNotification(applicationContext, "Order Update", "The chef is preparing your delicious meal!")
+            val currentStatus = order.status
+            Log.d("OrderSimulationWorker", "Simulating starting from status: $currentStatus")
 
-            // 3. OutForDelivery
-            delay(7000)
-            dao.updateOrderStatus(orderId, "OutForDelivery")
-            NotificationHelper.showNotification(applicationContext, "Order Update", "Your order is Out for Delivery! Keep track of the rider on the map.")
+            if (currentStatus == "Placed") {
+                delay(4000)
+                dao.updateOrderStatus(orderId, "Accepted")
+                NotificationHelper.showNotification(applicationContext, "Order Update", "Your order has been Accepted by the restaurant!")
+            }
+
+            if (currentStatus == "Placed" || currentStatus == "Accepted") {
+                delay(5000)
+                dao.updateOrderStatus(orderId, "Preparing")
+                NotificationHelper.showNotification(applicationContext, "Order Update", "The chef is preparing your delicious meal!")
+            }
+
+            if (currentStatus == "Placed" || currentStatus == "Accepted" || currentStatus == "Preparing") {
+                delay(7000)
+                dao.updateOrderStatus(orderId, "OutForDelivery")
+                NotificationHelper.showNotification(applicationContext, "Order Update", "Your order is Out for Delivery! Keep track of the rider on the map.")
+            }
 
             // Driver coordinates simulation
-            val order = dao.getOrderById(orderId)
-            if (order != null) {
-                val startLat = order.restaurantLat
-                val startLng = order.restaurantLng
-                val endLat = order.customerLat
-                val endLng = order.customerLng
+            val freshOrder = dao.getOrderById(orderId)
+            if (freshOrder != null) {
+                val startLat = if (freshOrder.status == "OutForDelivery" && freshOrder.driverLat != 0.0) freshOrder.driverLat else freshOrder.restaurantLat
+                val startLng = if (freshOrder.status == "OutForDelivery" && freshOrder.driverLng != 0.0) freshOrder.driverLng else freshOrder.restaurantLng
+                val endLat = freshOrder.customerLat
+                val endLng = freshOrder.customerLng
 
                 val osrmRoutePoints = try {
                     val urlStr = "https://router.project-osrm.org/route/v1/driving/$startLng,$startLat;$endLng,$endLat?overview=full&geometries=geojson"

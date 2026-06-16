@@ -174,9 +174,9 @@ exports.trackOrder = async (req, res, next) => {
       const lngDiff = order.customer_lng - driverLng;
       const distance = Math.sqrt(latDiff * latDiff + lngDiff * lngDiff);
 
-      // constant step size for smooth linear motion towards customer (approx 80-100m steps)
-      const step = 0.0008; 
-      if (distance <= step || (Math.abs(latDiff) < 0.0008 && Math.abs(lngDiff) < 0.0008)) {
+      // dynamic step size to guarantee delivery completes within 12 steps (approx 1 minute)
+      const step = Math.max(0.0008, distance / 12); 
+      if (distance <= step || (Math.abs(latDiff) < step && Math.abs(lngDiff) < step)) {
         status = 'Delivered';
         driverLat = order.customer_lat;
         driverLng = order.customer_lng;

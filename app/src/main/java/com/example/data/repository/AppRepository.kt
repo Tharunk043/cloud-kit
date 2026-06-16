@@ -459,14 +459,12 @@ class AppRepository(private val context: Context) {
         val rawRestaurantLat = restaurant?.latitude ?: 12.9715987
         val rawRestaurantLng = restaurant?.longitude ?: 77.5945627
 
-        val isFar = if (userLat != null && userLng != null) {
-            val distLat = Math.abs(rawRestaurantLat - userLat)
-            val distLng = Math.abs(rawRestaurantLng - userLng)
-            distLat > 0.5 || distLng > 0.5
-        } else false
+        val distLat = Math.abs(rawRestaurantLat - resolvedCustomerLat)
+        val distLng = Math.abs(rawRestaurantLng - resolvedCustomerLng)
+        val isFar = distLat > 0.5 || distLng > 0.5
 
-        val resolvedRestaurantLat = if (isFar && userLat != null) userLat + 0.0068 else rawRestaurantLat
-        val resolvedRestaurantLng = if (isFar && userLng != null) userLng - 0.0072 else rawRestaurantLng
+        val resolvedRestaurantLat = if (isFar) resolvedCustomerLat + 0.0068 else rawRestaurantLat
+        val resolvedRestaurantLng = if (isFar) resolvedCustomerLng - 0.0072 else rawRestaurantLng
 
         var localOrderId = 0
 

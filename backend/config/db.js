@@ -5,6 +5,7 @@ const connectionString = process.env.DATABASE_URL || 'postgresql://postgres.btfh
 
 const pool = new Pool({
   connectionString,
+  max: 3, // Prevent EMAXCONNSESSION by limiting pool size during rolling deploys
   ssl: {
     rejectUnauthorized: false // Required for Supabase connection
   }
