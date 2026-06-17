@@ -882,7 +882,7 @@ class AppRepository(private val context: Context) {
     }
 
     // --- Sync Helpers ---
-    private suspend fun syncWalletTransactions(phone: String) {
+    private suspend fun syncWalletTransactions(phone: String) = withContext(Dispatchers.IO) {
         try {
             val response = apiService.getWalletDetails(phone)
             if (response.isSuccessful && response.body()?.success == true) {
@@ -912,13 +912,13 @@ class AppRepository(private val context: Context) {
         }
     }
 
-    private suspend fun syncAddressesFromRemote(phone: String) {
+    private suspend fun syncAddressesFromRemote(phone: String) = withContext(Dispatchers.IO) {
         try {
             val response = apiService.getAddresses(phone)
             if (response.isSuccessful && response.body()?.success == true) {
                 val data = response.body()?.data
                 if (data != null) {
-                    val user = dao.getUserByPhone(phone) ?: return
+                    val user = dao.getUserByPhone(phone) ?: return@withContext
                     dao.clearSavedAddresses(user.id)
                     data.forEach { addr ->
                         val roomAddr = SavedAddressEntity(
@@ -1022,7 +1022,7 @@ class AppRepository(private val context: Context) {
         restaurantId: String? = null,
         status: String? = null,
         unassigned: Boolean? = null
-    ) {
+    ) = withContext(Dispatchers.IO) {
         try {
             val response = apiService.getOrders(userId, restaurantId, status, unassigned)
             if (response.isSuccessful && response.body()?.success == true) {
@@ -1124,7 +1124,7 @@ class AppRepository(private val context: Context) {
         status: String,
         lat: Double? = null,
         lng: Double? = null
-    ) {
+    ) = withContext(Dispatchers.IO) {
         try {
             val request = com.example.data.api.UpdateStatusRequest(status, lat, lng)
             val response = apiService.updateOrderStatus(orderId, request)
@@ -1139,7 +1139,7 @@ class AppRepository(private val context: Context) {
                         updated.driverLat,
                         updated.driverLng
                     )
-                    return
+                    return@withContext
                 }
             }
         } catch (e: Exception) {
@@ -1158,7 +1158,7 @@ class AppRepository(private val context: Context) {
         driverPhone: String,
         driverLat: Double,
         driverLng: Double
-    ) {
+    ) = withContext(Dispatchers.IO) {
         try {
             val request = com.example.data.api.AcceptRiderRequest(
                 driverName = driverName,
@@ -1178,7 +1178,7 @@ class AppRepository(private val context: Context) {
                         updated.driverLat,
                         updated.driverLng
                     )
-                    return
+                    return@withContext
                 }
             } else {
                 val errorMsg = response.errorBody()?.string() ?: ""
