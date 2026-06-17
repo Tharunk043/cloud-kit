@@ -1180,6 +1180,16 @@ class AppRepository(private val context: Context) {
                     )
                     return
                 }
+            } else {
+                val errorMsg = response.errorBody()?.string() ?: ""
+                val msg = if (errorMsg.contains("already accepted")) "This order has already been accepted by another rider!" else "Failed to accept job: server error"
+                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    com.example.utils.NotificationHelper.showNotification(
+                        context,
+                        "Job Dismissed",
+                        msg
+                    )
+                }
             }
         } catch (e: Exception) {
             Log.w("AppRepository", "Failed to accept rider on remote: ${e.message}")

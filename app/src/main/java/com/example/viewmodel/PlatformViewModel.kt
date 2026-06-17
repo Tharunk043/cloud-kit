@@ -28,6 +28,8 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import com.example.data.local.SavedAddressEntity
 import com.example.data.local.UserEntity
+import com.example.ui.fetchOsrmRouteShared
+import org.osmdroid.util.GeoPoint
 
 // Payment state enum
 enum class PaymentState { IDLE, PROCESSING, OTP_PENDING, SUCCESS, FAILURE }
@@ -460,20 +462,73 @@ class PlatformViewModel(application: Application) : AndroidViewModel(application
     fun startRiderLocationSimulation(orderId: String, localId: Int, restLat: Double, restLng: Double, custLat: Double, custLng: Double) {
         if (activeLocationSimulationJobs.containsKey(orderId)) return
         val job = viewModelScope.launch {
-            var currentLat = restLat
-            var currentLng = restLng
+            val route = fetchOsrmRouteShared(restLat, restLng, custLat, custLng)
             val steps = 15
-            for (i in 1..steps) {
-                kotlinx.coroutines.delay(3000)
-                val faction = i.toDouble() / steps.toDouble()
-                currentLat = restLat + (custLat - restLat) * faction
-                currentLng = restLng + (custLng - restLng) * faction
-                
-                val status = if (i == steps) "Delivered" else "OutForDelivery"
-                repository.updateOrderRemoteStatus(orderId, localId, status, currentLat, currentLng)
-                
-                if (status == "Delivered") {
-                    break
+            if (route.isNotEmpty()) {
+                // Calculate segment distances and total route distance
+                var totalDist = 0.0
+                val segmentDistances = mutableListOf<Double>()
+                for (i in 0 until (route.size - 1)) {
+                    val p1 = route[i]
+                    val p2 = route[i + 1]
+                    val dLat = p2.latitude - p1.latitude
+                    val dLng = p2.longitude - p1.longitude
+                    val dist = Math.sqrt(dLat * dLat + dLng * dLng)
+                    segmentDistances.add(dist)
+                    totalDist += dist
+                }
+
+                var currentLat = restLat
+                var currentLng = restLng
+
+                for (i in 1..steps) {
+                    kotlinx.coroutines.delay(3000)
+                    val fraction = i.toDouble() / steps.toDouble()
+                    val targetDistance = fraction * totalDist
+
+                    var traveled = 0.0
+                    var found = false
+                    for (j in 0 until (route.size - 1)) {
+                        val segDist = segmentDistances[j]
+                        if (targetDistance <= traveled + segDist) {
+                            val segFraction = if (segDist > 0.0) (targetDistance - traveled) / segDist else 1.0
+                            val p1 = route[j]
+                            val p2 = route[j + 1]
+                            currentLat = p1.latitude + (p2.latitude - p1.latitude) * segFraction
+                            currentLng = p1.longitude + (p2.longitude - p1.longitude) * segFraction
+                            found = true
+                            break
+                        }
+                        traveled += segDist
+                    }
+                    if (!found && route.isNotEmpty()) {
+                        currentLat = route.last().latitude
+                        currentLng = route.last().longitude
+                    }
+
+                    val status = if (i == steps) "Delivered" else "OutForDelivery"
+                    repository.updateOrderRemoteStatus(orderId, localId, status, currentLat, currentLng)
+
+                    if (status == "Delivered") {
+                        break
+                    }
+                }
+            } else {
+                // Fallback to straight line
+                var currentLat = restLat
+                var currentLng = restLng
+                for (i in 1..steps) {
+                    kotlinx.coroutines.delay(3000)
+                    val fraction = i.toDouble() / steps.toDouble()
+                    currentLat = restLat + (custLat - restLat) * fraction
+                    currentLng = restLng + (custLng - restLng) * fraction
+
+                    val status = if (i == steps) "Delivered" else "OutForDelivery"
+                    repository.updateOrderRemoteStatus(orderId, localId, status, currentLat, currentLng)
+
+                    if (status == "Delivered") {
+                        break
+                    }
                 }
             }
             activeLocationSimulationJobs.remove(orderId)
@@ -648,17 +703,23 @@ class PlatformViewModel(application: Application) : AndroidViewModel(application
                     viewModelScope.launch {
                         try {
                             val activeJobs = repository.orders.first().filter {
-                                it.driverName == currentUserName.value && it.status == "OutForDelivery"
+                                it.driverName == currentUserName.value && (
+                                    it.status == "Confirmed" ||
+                                    it.status == "Accepted" ||
+                                    it.status == "Preparing" ||
+                                    it.status == "Ready" ||
+                                    it.status == "OutForDelivery"
+                                )
                             }
                             for (job in activeJobs) {
                                 repository.updateOrderRemoteStatus(
                                     job.remoteId,
                                     job.id,
-                                    "OutForDelivery",
+                                    job.status,
                                     location.latitude,
                                     location.longitude
                                 )
-                                Log.d("PlatformViewModel", "Sent actual location for Order #${job.id} to remote server: ${location.latitude}, ${location.longitude}")
+                                Log.d("PlatformViewModel", "Sent actual location for Order #${job.id} to remote server: ${location.latitude}, ${location.longitude} with status: ${job.status}")
                             }
                         } catch (e: Exception) {
                             Log.e("PlatformViewModel", "Error posting live location updates: ${e.message}")

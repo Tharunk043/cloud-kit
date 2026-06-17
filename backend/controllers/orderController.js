@@ -253,11 +253,18 @@ exports.acceptRider = async (req, res, next) => {
         driver_phone = $2,
         driver_lat = $3,
         driver_lng = $4
-      WHERE id = $5
+      WHERE id = $5 AND (driver_name IS NULL OR driver_name = '' OR driver_name = 'Dash Rider' OR driver_name = 'Professional Rider' OR driver_name = $1)
       RETURNING *;
     `, [driverName || '', driverPhone || '', parseFloat(driverLat || 0.0), parseFloat(driverLng || 0.0), id]);
 
     if (result.rows.length === 0) {
+      const checkRes = await pool.query('SELECT driver_name FROM orders WHERE id = $1;', [id]);
+      if (checkRes.rows.length > 0) {
+        return res.status(409).json({
+          success: false,
+          message: `Order already accepted by another rider: ${checkRes.rows[0].driver_name}`
+        });
+      }
       return res.status(404).json({
         success: false,
         message: `Order not found with id: ${id}`

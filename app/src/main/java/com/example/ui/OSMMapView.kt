@@ -124,9 +124,9 @@ private fun scaledMarkerDrawable(ctx: Context, resId: Int, sizePx: Int,
 // OSRM: fetch a real-road driving route between two coordinate pairs.
 // Returns a list of GeoPoints along the road; empty list on failure.
 // ─────────────────────────────────────────────────────────────────────────────
-private suspend fun fetchOsrmRoute(
-    restLat: Double, restLng: Double,
-    custLat: Double, custLng: Double
+suspend fun fetchOsrmRouteShared(
+    startLat: Double, startLng: Double,
+    endLat: Double, endLng: Double
 ): List<GeoPoint> = withContext(Dispatchers.IO) {
     try {
         val client = OkHttpClient.Builder()
@@ -134,7 +134,7 @@ private suspend fun fetchOsrmRoute(
             .readTimeout(10, TimeUnit.SECONDS)
             .build()
         val url = "https://router.project-osrm.org/route/v1/driving/" +
-                "$restLng,$restLat;$custLng,$custLat?overview=full&geometries=geojson"
+                "$startLng,$startLat;$endLng,$endLat?overview=full&geometries=geojson"
         val request = Request.Builder().url(url).build()
         val response = client.newCall(request).execute()
         val body = response.body?.string() ?: return@withContext emptyList()
@@ -210,7 +210,13 @@ private fun snapToRoute(p: GeoPoint, route: List<GeoPoint>): SnappedPoint {
             bestSegmentIdx = i
         }
     }
-    return SnappedPoint(bestPoint, bestSegmentIdx)
+    
+    val distance = Math.sqrt(minDistanceSq)
+    return if (distance < 0.0013) {
+        SnappedPoint(bestPoint, bestSegmentIdx)
+    } else {
+        SnappedPoint(p, -1)
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -273,10 +279,17 @@ fun OSMDeliveryMap(
     }
 
     var driverMarker by remember { mutableStateOf<Marker?>(null) }
+    var restMarker by remember { mutableStateOf<Marker?>(null) }
+    var homeMarker by remember { mutableStateOf<Marker?>(null) }
     var routePolyline by remember { mutableStateOf<Polyline?>(null) }
     var locationOverlay by remember { mutableStateOf<MyLocationNewOverlay?>(null) }
     var routePoints by remember { mutableStateOf<List<GeoPoint>>(emptyList()) }
     var isRouteLoading by remember { mutableStateOf(false) }
+
+    var lastStartLat by remember { mutableStateOf(0.0) }
+    var lastStartLng by remember { mutableStateOf(0.0) }
+    var lastEndLat by remember { mutableStateOf(0.0) }
+    var lastEndLng by remember { mutableStateOf(0.0) }
 
     // Lifecycle management for MapView
     DisposableEffect(lifecycleOwner) {
@@ -294,28 +307,60 @@ fun OSMDeliveryMap(
         }
     }
 
-    // Fetch OSRM route whenever restaurant/customer coords change; fall back to straight line
-    LaunchedEffect(restaurantLat, restaurantLng, customerLat, customerLng) {
-        val cached = getCachedRoute(orderId)
-        val points = if (cached != null && cached.isNotEmpty()) {
-            cached.map { GeoPoint(it.first, it.second) }
-        } else {
-            isRouteLoading = true
-            val osrmPoints = fetchOsrmRoute(restaurantLat, restaurantLng, customerLat, customerLng)
-            val pts = if (osrmPoints.isNotEmpty()) osrmPoints
-            else straightLinePoints(restaurantLat, restaurantLng, driverLat, driverLng, customerLat, customerLng)
-            cacheRoute(orderId, pts.map { Pair(it.latitude, it.longitude) })
-            isRouteLoading = false
-            pts
+    // Fetch OSRM route dynamically based on orderStatus and position; fall back to straight line
+    LaunchedEffect(restaurantLat, restaurantLng, customerLat, customerLng, driverLat, driverLng, orderStatus) {
+        val isEnRouteToRestaurant = orderStatus == "Confirmed" || orderStatus == "Accepted" || orderStatus == "Preparing" || orderStatus == "Ready"
+        val startLat = if (isEnRouteToRestaurant && driverLat != 0.0) driverLat else restaurantLat
+        val startLng = if (isEnRouteToRestaurant && driverLng != 0.0) driverLng else restaurantLng
+        val endLat = if (isEnRouteToRestaurant) restaurantLat else customerLat
+        val endLng = if (isEnRouteToRestaurant) restaurantLng else customerLng
+
+        if (Math.abs(startLat - endLat) < 0.0001 && Math.abs(startLng - endLng) < 0.0001) {
+            routePoints = listOf(GeoPoint(startLat, startLng), GeoPoint(endLat, endLng))
+            return@LaunchedEffect
         }
-        routePoints = points
+
+        val distStart = Math.hypot(startLat - lastStartLat, startLng - lastStartLng)
+        val distEnd = Math.hypot(endLat - lastEndLat, endLng - lastEndLng)
+
+        if (routePoints.isEmpty() || distStart > 0.002 || distEnd > 0.002 || (lastStartLat == 0.0 && startLat != 0.0)) {
+            lastStartLat = startLat
+            lastStartLng = startLng
+            lastEndLat = endLat
+            lastEndLng = endLng
+
+            isRouteLoading = true
+            val osrmPoints = fetchOsrmRouteShared(startLat, startLng, endLat, endLng)
+            val pts = if (osrmPoints.isNotEmpty()) {
+                osrmPoints
+            } else {
+                straightLinePoints(startLat, startLng, driverLat, driverLng, endLat, endLng)
+            }
+            routePoints = pts
+            isRouteLoading = false
+        }
 
         withContext(Dispatchers.Main) {
             routePolyline?.let { poly ->
-                poly.setPoints(points)
+                poly.setPoints(routePoints)
                 mapView.invalidate()
             }
         }
+    }
+
+    LaunchedEffect(orderStatus) {
+        val isRiderAssigned = orderStatus == "Confirmed" || orderStatus == "OutForDelivery" || orderStatus == "Delivered" || orderStatus == "Accepted" || orderStatus == "Preparing" || orderStatus == "Ready"
+        val midLat = if (isRiderAssigned && driverLat != 0.0) {
+            (restaurantLat + customerLat + driverLat) / 3.0
+        } else {
+            (restaurantLat + customerLat) / 2.0
+        }
+        val midLng = if (isRiderAssigned && driverLng != 0.0) {
+            (restaurantLng + customerLng + driverLng) / 3.0
+        } else {
+            (restaurantLng + customerLng) / 2.0
+        }
+        mapView.controller.animateTo(GeoPoint(midLat, midLng), 14.5, 800L)
     }
 
     // Animate rider marker along the actual road segments of the OSRM route.
@@ -348,17 +393,22 @@ fun OSMDeliveryMap(
             val startSnap = snapToRoute(start, routePoints)
             val targetSnap = snapToRoute(target, routePoints)
             
-            path.add(startSnap.point)
-            if (startSnap.segmentIdx < targetSnap.segmentIdx) {
-                for (idx in (startSnap.segmentIdx + 1)..targetSnap.segmentIdx) {
-                    path.add(routePoints[idx])
+            if (startSnap.segmentIdx != -1 && targetSnap.segmentIdx != -1) {
+                path.add(startSnap.point)
+                if (startSnap.segmentIdx < targetSnap.segmentIdx) {
+                    for (idx in (startSnap.segmentIdx + 1)..targetSnap.segmentIdx) {
+                        path.add(routePoints[idx])
+                    }
+                } else if (startSnap.segmentIdx > targetSnap.segmentIdx) {
+                    for (idx in (startSnap.segmentIdx) downTo (targetSnap.segmentIdx + 1)) {
+                        path.add(routePoints[idx])
+                    }
                 }
-            } else if (startSnap.segmentIdx > targetSnap.segmentIdx) {
-                for (idx in (startSnap.segmentIdx) downTo (targetSnap.segmentIdx + 1)) {
-                    path.add(routePoints[idx])
-                }
+                path.add(targetSnap.point)
+            } else {
+                path.add(start)
+                path.add(target)
             }
-            path.add(targetSnap.point)
         } else {
             path.add(start)
             path.add(target)
@@ -491,20 +541,22 @@ fun OSMDeliveryMap(
                     val markerSizePx = 90
 
                     // ── Restaurant marker
-                    val restMarker = Marker(mv).apply {
+                    val restMkr = Marker(mv).apply {
                         position = GeoPoint(restaurantLat, restaurantLng)
                         title = "Restaurant"
                         setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
                         icon = scaledMarkerDrawable(ctx, R.drawable.ic_marker_restaurant, markerSizePx)
                     }
+                    restMarker = restMkr
 
                     // ── Customer / home marker
-                    val homeMarker = Marker(mv).apply {
+                    val homeMkr = Marker(mv).apply {
                         position = GeoPoint(customerLat, customerLng)
                         title = "Your Delivery Location"
                         setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
                         icon = scaledMarkerDrawable(ctx, R.drawable.ic_marker_home, markerSizePx)
                     }
+                    homeMarker = homeMkr
 
                     // ── Delivery rider marker — use top-down 3D model look
                     val riderMkr = Marker(mv).apply {
@@ -543,16 +595,16 @@ fun OSMDeliveryMap(
                     }
                     locationOverlay = myLocOverlay
 
-                    val isRiderAssigned = orderStatus == "Confirmed" || orderStatus == "OutForDelivery" || orderStatus == "Delivered"
+                    val isRiderAssigned = orderStatus == "Confirmed" || orderStatus == "OutForDelivery" || orderStatus == "Delivered" || orderStatus == "Accepted" || orderStatus == "Preparing" || orderStatus == "Ready"
 
                     mv.overlays.clear()
                     if (isRiderAssigned) {
                         mv.overlays.addAll(
-                            listOf(poly, restMarker, homeMarker, riderMkr, myLocOverlay)
+                            listOf(poly, restMkr, homeMkr, riderMkr, myLocOverlay)
                         )
                     } else {
                         mv.overlays.addAll(
-                            listOf(restMarker, homeMarker, myLocOverlay)
+                            listOf(restMkr, homeMkr, myLocOverlay)
                         )
                     }
 
@@ -572,7 +624,28 @@ fun OSMDeliveryMap(
                 }
             },
             update = { mv ->
-                // Animation is handled by LaunchedEffect; just keep the MapView refreshed
+                val isRiderAssigned = orderStatus == "Confirmed" || orderStatus == "OutForDelivery" || orderStatus == "Delivered" || orderStatus == "Accepted" || orderStatus == "Preparing" || orderStatus == "Ready"
+                
+                mv.overlays.clear()
+                
+                val poly = routePolyline
+                val restMkr = restMarker
+                val homeMkr = homeMarker
+                val riderMkr = driverMarker
+                val locOverlay = locationOverlay
+                
+                if (isRiderAssigned) {
+                    if (poly != null) mv.overlays.add(poly)
+                    if (restMkr != null) mv.overlays.add(restMkr)
+                    if (homeMkr != null) mv.overlays.add(homeMkr)
+                    if (riderMkr != null) mv.overlays.add(riderMkr)
+                    if (locOverlay != null) mv.overlays.add(locOverlay)
+                } else {
+                    if (restMkr != null) mv.overlays.add(restMkr)
+                    if (homeMkr != null) mv.overlays.add(homeMkr)
+                    if (locOverlay != null) mv.overlays.add(locOverlay)
+                }
+                
                 mv.invalidate()
             },
             modifier = Modifier.fillMaxSize()
