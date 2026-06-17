@@ -309,9 +309,10 @@ fun OSMDeliveryMap(
 
     // Fetch OSRM route dynamically based on orderStatus and position; fall back to straight line
     LaunchedEffect(restaurantLat, restaurantLng, customerLat, customerLng, driverLat, driverLng, orderStatus) {
+        val isRiderAssigned = orderStatus == "Confirmed" || orderStatus == "Accepted" || orderStatus == "Preparing" || orderStatus == "Ready" || orderStatus == "OutForDelivery"
         val isEnRouteToRestaurant = orderStatus == "Confirmed" || orderStatus == "Accepted" || orderStatus == "Preparing" || orderStatus == "Ready"
-        val startLat = if (isEnRouteToRestaurant && driverLat != 0.0) driverLat else restaurantLat
-        val startLng = if (isEnRouteToRestaurant && driverLng != 0.0) driverLng else restaurantLng
+        val startLat = if (isRiderAssigned && driverLat != 0.0) driverLat else restaurantLat
+        val startLng = if (isRiderAssigned && driverLng != 0.0) driverLng else restaurantLng
         val endLat = if (isEnRouteToRestaurant) restaurantLat else customerLat
         val endLng = if (isEnRouteToRestaurant) restaurantLng else customerLng
 
@@ -348,19 +349,38 @@ fun OSMDeliveryMap(
         }
     }
 
-    LaunchedEffect(orderStatus) {
-        val isRiderAssigned = orderStatus == "Confirmed" || orderStatus == "OutForDelivery" || orderStatus == "Delivered" || orderStatus == "Accepted" || orderStatus == "Preparing" || orderStatus == "Ready"
-        val midLat = if (isRiderAssigned && driverLat != 0.0) {
-            (restaurantLat + customerLat + driverLat) / 3.0
-        } else {
-            (restaurantLat + customerLat) / 2.0
+    LaunchedEffect(restaurantLat, restaurantLng, customerLat, customerLng, driverLat, driverLng, orderStatus) {
+        val points = mutableListOf(
+            Pair(restaurantLat, restaurantLng),
+            Pair(customerLat, customerLng)
+        )
+        // Only include driver in focus bounding box calculation if they are close enough (<15km)
+        if (driverLat != 0.0 && driverLng != 0.0) {
+            val distToRest = Math.hypot(driverLat - restaurantLat, driverLng - restaurantLng)
+            if (distToRest < 0.15) {
+                points.add(Pair(driverLat, driverLng))
+            }
         }
-        val midLng = if (isRiderAssigned && driverLng != 0.0) {
-            (restaurantLng + customerLng + driverLng) / 3.0
-        } else {
-            (restaurantLng + customerLng) / 2.0
+        val minLat = points.minOf { it.first }
+        val maxLat = points.maxOf { it.first }
+        val minLng = points.minOf { it.second }
+        val maxLng = points.maxOf { it.second }
+        
+        val midLat = (minLat + maxLat) / 2.0
+        val midLng = (minLng + maxLng) / 2.0
+        
+        val dLat = maxLat - minLat
+        val dLng = maxLng - minLng
+        val maxDelta = Math.max(dLat, dLng)
+        val zoom = when {
+            maxDelta < 0.005 -> 16.0
+            maxDelta < 0.015 -> 15.0
+            maxDelta < 0.03 -> 13.8
+            maxDelta < 0.07 -> 12.8
+            maxDelta < 0.15 -> 11.8
+            else -> 11.0
         }
-        mapView.controller.animateTo(GeoPoint(midLat, midLng), 14.5, 800L)
+        mapView.controller.animateTo(GeoPoint(midLat, midLng), zoom, 800L)
     }
 
     // Animate rider marker along the actual road segments of the OSRM route.
@@ -608,19 +628,38 @@ fun OSMDeliveryMap(
                         )
                     }
 
-                    // Center map to fit all key points
-                    val midLat = if (isRiderAssigned) {
-                        (restaurantLat + customerLat + driverLat) / 3.0
-                    } else {
-                        (restaurantLat + customerLat) / 2.0
+                    // Center map to cover delivery address to restaurant (and rider if nearby)
+                    val points = mutableListOf(
+                        Pair(restaurantLat, restaurantLng),
+                        Pair(customerLat, customerLng)
+                    )
+                    if (driverLat != 0.0 && driverLng != 0.0) {
+                        val distToRest = Math.hypot(driverLat - restaurantLat, driverLng - restaurantLng)
+                        if (distToRest < 0.15) {
+                            points.add(Pair(driverLat, driverLng))
+                        }
                     }
-                    val midLng = if (isRiderAssigned) {
-                        (restaurantLng + customerLng + driverLng) / 3.0
-                    } else {
-                        (restaurantLng + customerLng) / 2.0
+                    val minLat = points.minOf { it.first }
+                    val maxLat = points.maxOf { it.first }
+                    val minLng = points.minOf { it.second }
+                    val maxLng = points.maxOf { it.second }
+                    
+                    val midLat = (minLat + maxLat) / 2.0
+                    val midLng = (minLng + maxLng) / 2.0
+                    
+                    val dLat = maxLat - minLat
+                    val dLng = maxLng - minLng
+                    val maxDelta = Math.max(dLat, dLng)
+                    val zoom = when {
+                        maxDelta < 0.005 -> 16.0
+                        maxDelta < 0.015 -> 15.0
+                        maxDelta < 0.03 -> 13.8
+                        maxDelta < 0.07 -> 12.8
+                        maxDelta < 0.15 -> 11.8
+                        else -> 11.0
                     }
                     mv.controller.setCenter(GeoPoint(midLat, midLng))
-                    mv.controller.setZoom(14.5)
+                    mv.controller.setZoom(zoom)
                 }
             },
             update = { mv ->
@@ -636,13 +675,25 @@ fun OSMDeliveryMap(
                 
                 if (isRiderAssigned) {
                     if (poly != null) mv.overlays.add(poly)
-                    if (restMkr != null) mv.overlays.add(restMkr)
-                    if (homeMkr != null) mv.overlays.add(homeMkr)
+                    if (restMkr != null) {
+                        restMkr.position = GeoPoint(restaurantLat, restaurantLng)
+                        mv.overlays.add(restMkr)
+                    }
+                    if (homeMkr != null) {
+                        homeMkr.position = GeoPoint(customerLat, customerLng)
+                        mv.overlays.add(homeMkr)
+                    }
                     if (riderMkr != null) mv.overlays.add(riderMkr)
                     if (locOverlay != null) mv.overlays.add(locOverlay)
                 } else {
-                    if (restMkr != null) mv.overlays.add(restMkr)
-                    if (homeMkr != null) mv.overlays.add(homeMkr)
+                    if (restMkr != null) {
+                        restMkr.position = GeoPoint(restaurantLat, restaurantLng)
+                        mv.overlays.add(restMkr)
+                    }
+                    if (homeMkr != null) {
+                        homeMkr.position = GeoPoint(customerLat, customerLng)
+                        mv.overlays.add(homeMkr)
+                    }
                     if (locOverlay != null) mv.overlays.add(locOverlay)
                 }
                 
