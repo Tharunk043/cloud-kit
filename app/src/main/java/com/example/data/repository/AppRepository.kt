@@ -1066,7 +1066,7 @@ class AppRepository(private val context: Context) {
                         )
                         
                         val isRider = context.packageName.contains("rider")
-                        if (isRider && statusChanged && remote.driverName.isEmpty() && (remote.status == "Placed" || remote.status == "Accepted" || remote.status == "Preparing")) {
+                        if (isRider && statusChanged && remote.driverName.isEmpty() && (remote.status == "Placed" || remote.status == "Accepted" || remote.status == "Preparing" || remote.status == "Ready")) {
                             com.example.utils.NotificationHelper.showNotification(
                                 context,
                                 "Gourmet Dispatch Update",

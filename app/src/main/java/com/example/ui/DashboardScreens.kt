@@ -3200,6 +3200,7 @@ fun ActiveOrderTrackingView(
                 when (status) {
                     "Placed", "Accepted", "Confirmed" -> "20 - 25 mins (Rider assigned & accepting)"
                     "Preparing", "Cooking" -> "15 - 20 mins (Chef preparing your meal)"
+                    "Ready" -> "10 - 15 mins (Food prepared, awaiting pickup)"
                     "OutForDelivery" -> {
                         val etaMinutes = (distanceKm * 2.5).toInt().coerceAtLeast(1)
                         "Arriving in $etaMinutes mins (~${String.format(java.util.Locale.US, "%.1f", distanceKm)} km away)"
@@ -3236,9 +3237,10 @@ fun ActiveOrderTrackingView(
                     Spacer(modifier = Modifier.height(12.dp))
                     LinearProgressIndicator(
                         progress = when (status) {
-                            "Placed", "Accepted", "Confirmed" -> 0.25f
-                            "Preparing", "Cooking" -> 0.50f
-                            "OutForDelivery" -> 0.75f
+                            "Placed", "Accepted", "Confirmed" -> 0.2f
+                            "Preparing", "Cooking" -> 0.4f
+                            "Ready" -> 0.6f
+                            "OutForDelivery" -> 0.8f
                             "Delivered" -> 1.0f
                             else -> 0.0f
                         },
@@ -4151,7 +4153,7 @@ fun KitchenSection(viewModel: PlatformViewModel) {
     }
 
     val orders by viewModel.orders.collectAsState()
-    val kitchenOrders = orders.filter { it.status == "Placed" || it.status == "Accepted" || it.status == "Preparing" || it.status == "Confirmed" }
+    val kitchenOrders = orders.filter { it.status == "Placed" || it.status == "Accepted" || it.status == "Preparing" || it.status == "Confirmed" || it.status == "Ready" }
 
     var selectedSectionState by remember { mutableStateOf("Pending Orders") } // Pending, Menu management, Performance
 
@@ -4231,12 +4233,19 @@ fun KitchenSection(viewModel: PlatformViewModel) {
                                             }
                                         } else if (order.status == "Preparing") {
                                             Button(
-                                                onClick = { viewModel.updateOrderStatusRemote(order.remoteId, order.id, "OutForDelivery") },
-                                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E88E5)),
+                                                onClick = { viewModel.updateOrderStatusRemote(order.remoteId, order.id, "Ready") },
+                                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4CAF50)),
                                                 modifier = Modifier.weight(1f)
                                             ) {
-                                                Text("HANDOFF TO DRIVER")
+                                                Text("FOOD READY")
                                             }
+                                        } else if (order.status == "Ready") {
+                                            Text(
+                                                text = "Awaiting Rider Pickup",
+                                                color = Color(0xFF4CAF50),
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(8.dp)
+                                            )
                                         }
                                     }
                                 }
@@ -4300,9 +4309,9 @@ fun RiderSection(viewModel: PlatformViewModel) {
     val driverName = currentUserName.ifEmpty { "Professional Rider" }
     val driverPhone = currentUserPhone.ifEmpty { "+1 555-0199" }
     
-    // Available Jobs: Placed/Accepted/Preparing orders without a driver assigned
+    // Available Jobs: Placed/Accepted/Preparing/Ready orders without a driver assigned
     val availableJobs = orders.filter { 
-        (it.status == "Placed" || it.status == "Accepted" || it.status == "Preparing") && 
+        (it.status == "Placed" || it.status == "Accepted" || it.status == "Preparing" || it.status == "Ready") && 
         (it.driverName.isEmpty() || it.driverName == "Dash Rider" || it.driverName == "Professional Rider" && it.status == "Placed") 
     }
     
@@ -4480,7 +4489,7 @@ fun RiderSection(viewModel: PlatformViewModel) {
                                         Text("ACCEPT DELIVERY JOB")
                                     }
                                 } else {
-                                    if (order.status == "Confirmed" || order.status == "Preparing" || order.status == "Accepted") {
+                                    if (order.status == "Confirmed" || order.status == "Preparing" || order.status == "Accepted" || order.status == "Ready") {
                                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                             Button(
                                                 onClick = {

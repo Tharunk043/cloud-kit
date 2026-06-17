@@ -248,7 +248,7 @@ exports.acceptRider = async (req, res, next) => {
 
     const result = await pool.query(`
       UPDATE orders SET
-        status = 'Confirmed',
+        status = CASE WHEN status IN ('Placed', 'Accepted') THEN 'Confirmed' ELSE status END,
         driver_name = $1,
         driver_phone = $2,
         driver_lat = $3,

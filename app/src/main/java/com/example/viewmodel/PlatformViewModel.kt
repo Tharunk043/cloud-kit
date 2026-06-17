@@ -720,6 +720,7 @@ class PlatformViewModel(application: Application) : AndroidViewModel(application
                                             "Accepted" -> "Your order has been accepted by the restaurant! 🍳"
                                             "Preparing" -> "The chef is preparing your delicious meal! 🍜"
                                             "Confirmed" -> "A delivery partner has accepted your order! 🛵"
+                                            "Ready" -> "Your food is prepared and waiting for the rider at the restaurant! 🛍️"
                                             "OutForDelivery" -> "Your order is Out for Delivery! Keep track of the rider on the map."
                                             "Delivered" -> "Delivered! Enjoy your meal 🍽️"
                                             else -> "Order status is now: ${updated.status}"
